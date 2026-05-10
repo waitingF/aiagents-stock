@@ -4,9 +4,18 @@
 /test_pdf_export.py
 /test_pe_pb.py
 /venv
+.venv
 /__pycache__
+.idea
 # 环境变量文件
 .env
 /.cursor
 /openspec
 TradEnv/
+
+# running data
+/data
+*.db
+*.sqlite
+*.log
+risk_data_debug_output.txt

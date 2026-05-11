@@ -7,7 +7,37 @@ from datetime import datetime, timedelta
 import requests
 import json
 import pywencai
+import os
 from src.aiagents_stock.integrations.market_data.providers import data_source_manager
+
+
+EASTMONEY_NO_PROXY_HOSTS = (
+    "eastmoney.com",
+    ".eastmoney.com",
+    "push2.eastmoney.com",
+    "72.push2.eastmoney.com",
+)
+
+
+def _ensure_eastmoney_no_proxy():
+    """Bypass broken local proxies for Eastmoney market data endpoints."""
+    bypass_enabled = os.getenv("MARKET_DATA_BYPASS_PROXY", "true").lower()
+    if bypass_enabled in {"0", "false", "no", "off"}:
+        return
+
+    for env_key in ("NO_PROXY", "no_proxy"):
+        current = os.getenv(env_key, "")
+        entries = [item.strip() for item in current.split(",") if item.strip()]
+        lower_entries = {item.lower() for item in entries}
+        missing = [
+            host for host in EASTMONEY_NO_PROXY_HOSTS
+            if host.lower() not in lower_entries
+        ]
+        if missing:
+            os.environ[env_key] = ",".join(entries + missing)
+
+
+_ensure_eastmoney_no_proxy()
 
 class StockDataFetcher:
     """股票数据获取类"""
@@ -67,6 +97,60 @@ class StockDataFetcher:
             symbol = symbol[2:]
         # 补齐到5位
         return symbol.zfill(5)
+
+    def _to_yfinance_hk_symbol(self, symbol):
+        """Convert a Hong Kong stock code to yfinance format, e.g. 00700 -> 0700.HK."""
+        hk_code = self._normalize_hk_code(symbol)
+        return f"{hk_code[-4:]}.HK"
+
+    def _get_hk_stock_info_from_yfinance(self, symbol):
+        """Fallback Hong Kong quote source when Eastmoney/Akshare is unavailable."""
+        hk_code = self._normalize_hk_code(symbol)
+        ticker = yf.Ticker(self._to_yfinance_hk_symbol(hk_code))
+
+        hist = ticker.history(period="5d", interval="1d")
+        if hist is None or hist.empty:
+            return None
+
+        latest = hist.iloc[-1]
+        current_price = latest.get("Close", "N/A")
+        change_percent = "N/A"
+        if len(hist) > 1:
+            prev_close = hist.iloc[-2].get("Close")
+            if prev_close:
+                change_percent = round(((current_price - prev_close) / prev_close) * 100, 2)
+
+        info = {}
+        try:
+            info = ticker.info or {}
+        except Exception:
+            info = {}
+
+        return {
+            "symbol": hk_code,
+            "name": info.get("shortName") or info.get("longName") or f"港股{hk_code}",
+            "current_price": current_price,
+            "change_percent": change_percent,
+            "pe_ratio": info.get("trailingPE") or info.get("forwardPE") or "N/A",
+            "pb_ratio": info.get("priceToBook") or "N/A",
+            "market_cap": info.get("marketCap") or "N/A",
+            "market": "香港股市",
+            "exchange": "香港交易所"
+        }
+
+    def _get_hk_stock_data_from_yfinance(self, symbol, period="1y"):
+        """Fallback Hong Kong historical data source when Akshare cannot reach Eastmoney."""
+        ticker = yf.Ticker(self._to_yfinance_hk_symbol(symbol))
+        df = ticker.history(period=period, interval="1d")
+        if df is None or df.empty:
+            return None
+
+        expected_columns = ["Open", "High", "Low", "Close", "Volume"]
+        missing_columns = [col for col in expected_columns if col not in df.columns]
+        if missing_columns:
+            return None
+
+        return df[expected_columns].copy()
     
     def _get_chinese_stock_info(self, symbol):
         """获取中国股票基本信息（支持akshare和tushare数据源自动切换）"""
@@ -311,6 +395,16 @@ class StockDataFetcher:
                             info['change_percent'] = round(change_pct, 2)
                 except Exception as e:
                     print(f"获取港股历史数据失败: {e}")
+
+            if info['current_price'] == 'N/A' or info['name'] == '未知':
+                try:
+                    fallback_info = self._get_hk_stock_info_from_yfinance(hk_code)
+                    if fallback_info:
+                        for key, value in fallback_info.items():
+                            if info.get(key) in ('N/A', '未知', None):
+                                info[key] = value
+                except Exception as e:
+                    print(f"获取港股备用行情失败: {e}")
             
             return info
             
@@ -488,8 +582,12 @@ class StockDataFetcher:
                 start_date = (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
             
             # 获取港股历史数据
-            df = ak.stock_hk_hist(symbol=hk_code, period="daily", 
-                                start_date=start_date, end_date=end_date, adjust="qfq")
+            try:
+                df = ak.stock_hk_hist(symbol=hk_code, period="daily", 
+                                    start_date=start_date, end_date=end_date, adjust="qfq")
+            except Exception as e:
+                print(f"获取港股 Akshare 历史数据失败: {e}")
+                df = None
             
             if df is not None and not df.empty:
                 # 重命名列以匹配标准格式
@@ -504,8 +602,11 @@ class StockDataFetcher:
                 df['Date'] = pd.to_datetime(df['Date'])
                 df.set_index('Date', inplace=True)
                 return df
-            else:
-                return {"error": "无法获取港股历史数据"}
+            fallback_df = self._get_hk_stock_data_from_yfinance(hk_code, period)
+            if fallback_df is not None and not fallback_df.empty:
+                return fallback_df
+
+            return {"error": "无法获取港股历史数据"}
                 
         except Exception as e:
             return {"error": f"获取港股数据失败: {str(e)}"}

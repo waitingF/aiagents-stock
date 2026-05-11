@@ -12,6 +12,7 @@ from typing import Optional, Callable
 import traceback
 
 from src.aiagents_stock.features.portfolio.manager import portfolio_manager
+from src.aiagents_stock.features.portfolio.review import extract_first_price_range
 from src.aiagents_stock.integrations.notification.service import NotificationService
 
 
@@ -290,15 +291,8 @@ class PortfolioScheduler:
                 take_profit_str = final_decision.get("take_profit", "")
                 stop_loss_str = final_decision.get("stop_loss", "")
                 
-                # 解析进场区间（格式如"10.5-12.3"）
-                entry_min, entry_max = None, None
-                if entry_range and isinstance(entry_range, str) and "-" in entry_range:
-                    try:
-                        parts = entry_range.split("-")
-                        entry_min = float(parts[0].strip())
-                        entry_max = float(parts[1].strip())
-                    except:
-                        pass
+                # 解析进场区间，兼容带说明和多区间的AI输出
+                entry_min, entry_max = extract_first_price_range(entry_range)
                 
                 # 解析止盈止损（提取数字）
                 import re
@@ -429,7 +423,7 @@ class PortfolioScheduler:
             code = item.get("code")
             result = item.get("result", {})
             final_decision = result.get("final_decision", {})
-            rating = final_decision.get("investment_rating", "持有")
+            rating = final_decision.get("rating", final_decision.get("investment_rating", "持有"))
             
             rating_stats[rating] = rating_stats.get(rating, 0) + 1
             
@@ -731,4 +725,3 @@ if __name__ == "__main__":
         print(f"  {key}: {value}")
     
     print("\n[OK] 调度器测试完成")
-

@@ -588,6 +588,7 @@ _此消息由AI股票分析系统自动发送_"""
                     .rating-buy {{ color: #28a745; font-weight: bold; }}
                     .rating-hold {{ color: #ffc107; font-weight: bold; }}
                     .rating-sell {{ color: #dc3545; font-weight: bold; }}
+                    .review {{ background-color: #fafafa; padding: 8px; border-left: 3px solid #6c757d; margin-top: 8px; }}
                 </style>
             </head>
             <body>
@@ -629,6 +630,7 @@ _此消息由AI股票分析系统自动发送_"""
                     entry_range = final_decision.get("entry_range", "N/A")
                     take_profit = final_decision.get("take_profit", "N/A")
                     stop_loss = final_decision.get("stop_loss", "N/A")
+                    review = result.get("portfolio_review", {})
                     
                     # 评级颜色
                     rating_class = "rating-hold"
@@ -639,9 +641,10 @@ _此消息由AI股票分析系统自动发送_"""
                     
                     html_body += f"""
                     <div class="stock">
-                        <h4>{code} {stock_info.get('name', '')} - <span class="{rating_class}">{rating}</span> (信心度: {confidence})</h4>
+                        <h4>{code} {stock_info.get('name', '')} - <span class="{rating_class}">{rating}</span> (信心度: {confidence}/10)</h4>
                         <p>进场区间: {entry_range}</p>
                         <p>止盈位: {take_profit} | 止损位: {stop_loss}</p>
+                        {f"<div class='review'><p><strong>复盘状态:</strong> {review.get('review_status', '待验证')}</p><p><strong>复盘摘要:</strong> {review.get('review_summary', '')}</p></div>" if review else ""}
                     </div>
                     """
                 else:
@@ -681,6 +684,7 @@ _此消息由AI股票分析系统自动发送_"""
 """
             
             text_body += "\n分析结果详情:\n"
+            review_summaries = []
             for item in results[:10]:
                 code = item.get("code", "")
                 result = item.get("result", {})
@@ -690,10 +694,19 @@ _此消息由AI股票分析系统自动发送_"""
                     stock_info = result.get("stock_info", {})
                     # 使用正确的字段名
                     rating = final_decision.get("rating", "未知")
+                    review = result.get("portfolio_review", {})
                     text_body += f"- {code} {stock_info.get('name', '')}: {rating}\n"
+                    if review and review.get("review_summary"):
+                        text_body += f"  复盘: {review.get('review_status', '待验证')} - {review.get('review_summary')}\n"
+                        review_summaries.append(review.get("review_summary"))
                 else:
                     error = result.get("error", "未知错误")
                     text_body += f"- {code}: 分析失败 ({error})\n"
+
+            if review_summaries:
+                text_body += "\n复盘摘要:\n"
+                for summary in review_summaries[:5]:
+                    text_body += f"- {summary}\n"
             
             success = False
             
@@ -753,6 +766,7 @@ _此消息由AI股票分析系统自动发送_"""
             succeeded = len([r for r in analysis_results.get("results", []) if r.get("result", {}).get("success")])
             failed = total - succeeded
             elapsed_time = analysis_results.get("elapsed_time", 0)
+            results = analysis_results.get("results", [])
             
             # 构建Markdown消息
             content = f"### 持仓定时分析完成\\n\\n"
@@ -766,6 +780,21 @@ _此消息由AI股票分析系统自动发送_"""
                 content += f"**监测同步**\\n"
                 content += f"- 新增: {sync_result.get('added', 0)} 只\\n"
                 content += f"- 更新: {sync_result.get('updated', 0)} 只\\n\\n"
+
+            review_lines = []
+            for item in results:
+                result = item.get("result", {})
+                review = result.get("portfolio_review", {})
+                if review and review.get("review_summary"):
+                    review_lines.append(
+                        f"- {review.get('review_status', '待验证')}: {review.get('review_summary')}"
+                    )
+
+            if review_lines:
+                content += f"**持仓复盘摘要**\\n"
+                for line in review_lines[:8]:
+                    content += f"{line}\\n"
+                content += "\\n"
             
             # 根据webhook类型构建请求
             if self.config['webhook_type'] == 'dingtalk':
@@ -793,7 +822,6 @@ _此消息由AI股票分析系统自动发送_"""
 
 # 全局通知服务实例
 notification_service = NotificationService()
-
 
 
 

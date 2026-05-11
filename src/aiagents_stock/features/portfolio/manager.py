@@ -4,6 +4,7 @@
 提供持仓股票管理和批量分析功能
 """
 
+import json
 import time
 from typing import List, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +12,7 @@ from datetime import datetime
 
 # 导入必要的模块
 from src.aiagents_stock.features.portfolio.repository import portfolio_db
+from src.aiagents_stock.features.portfolio import review as portfolio_review
 from src.aiagents_stock.features.stock_analysis.service import analyze_single_stock_for_batch
 import src.aiagents_stock.core.config as config
 
@@ -30,6 +32,34 @@ def _extract_first_price_range(price_text) -> tuple:
         return float(numbers[0]), float(numbers[1])
     except (ValueError, TypeError):
         return None, None
+
+
+def _extract_first_price(price_text):
+    """Extract the first numeric price from model output."""
+    import re
+
+    if not price_text:
+        return None
+
+    numbers = re.findall(r'\d+(?:\.\d+)?', str(price_text))
+    if not numbers:
+        return None
+
+    try:
+        return float(numbers[0])
+    except (ValueError, TypeError):
+        return None
+
+
+def _safe_float(value):
+    """Convert a value to float when possible."""
+    if value is None or value == "":
+        return None
+
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return _extract_first_price(value)
 
 
 class PortfolioManager:
@@ -399,7 +429,32 @@ class PortfolioManager:
             return self.batch_analyze_sequential(stock_codes, period, selected_agents, progress_callback)
     
     # ==================== 分析结果保存 ====================
-    
+
+    def generate_portfolio_review(self, previous_record: Optional[Dict],
+                                  current_record: Dict,
+                                  stock: Dict,
+                                  final_decision: Dict) -> Dict:
+        """
+        基于上一条历史和本次分析生成持仓复盘。
+
+        当前版本使用确定性规则生成结构化复盘，避免额外LLM调用影响批量任务稳定性。
+        """
+        return portfolio_review.build_portfolio_review(
+            previous_record, current_record, stock, final_decision
+        )
+
+    def _build_next_watchpoints(self, current_record: Dict, final_decision: Dict) -> List[str]:
+        """生成下次复盘关注点。"""
+        return portfolio_review.build_next_watchpoints(current_record, final_decision)
+
+    def _build_review_summary(self, code: str, name: str, review_status: str,
+                              price_change_pct, plan_check_parts: List[str],
+                              rating_change: str) -> str:
+        """生成一行复盘摘要。"""
+        return portfolio_review.build_review_summary(
+            code, name, review_status, price_change_pct, plan_check_parts, rating_change
+        )
+
     def save_analysis_results(self, analysis_results: Dict) -> List[int]:
         """
         保存批量分析结果到数据库
@@ -446,11 +501,18 @@ class PortfolioManager:
             except (ValueError, TypeError):
                 # 如果转换失败，使用默认值
                 confidence = 5.0
-            current_price = stock_info.get("current_price", 0.0)
+            current_price = _safe_float(stock_info.get("current_price", 0.0)) or 0.0
             target_price_str = final_decision.get("target_price", "")
             entry_range = final_decision.get("entry_range", "")
             take_profit_str = final_decision.get("take_profit", "")
             stop_loss_str = final_decision.get("stop_loss", "")
+            operation_advice = final_decision.get(
+                "operation_advice",
+                final_decision.get("advice", final_decision.get("summary", ""))
+            )
+            holding_period = final_decision.get("holding_period", "")
+            position_size = final_decision.get("position_size", "")
+            risk_warning = final_decision.get("risk_warning", "")
             
             # 解析目标价格
             import re
@@ -485,16 +547,45 @@ class PortfolioManager:
                 except:
                     pass
             
-            # 生成摘要（使用advice或summary字段）
-            summary = final_decision.get("advice", final_decision.get("summary", ""))[:500]  # 限制长度
+            # 生成摘要，优先保存AI实际返回的操作建议
+            summary = operation_advice[:500] if operation_advice else ""
+            final_decision_json = json.dumps(final_decision, ensure_ascii=False, default=str)
+            current_record = {
+                "rating": rating,
+                "confidence": confidence,
+                "current_price": current_price,
+                "target_price": target_price,
+                "entry_min": entry_min,
+                "entry_max": entry_max,
+                "take_profit": take_profit,
+                "stop_loss": stop_loss,
+                "summary": summary,
+                "operation_advice": operation_advice,
+                "holding_period": holding_period,
+                "position_size": position_size,
+                "risk_warning": risk_warning,
+            }
+            previous_record = self.db.get_latest_analysis(stock_id)
+            review = self.generate_portfolio_review(previous_record, current_record, stock, final_decision)
+            review_json = json.dumps(review, ensure_ascii=False, default=str)
             
             try:
                 # 保存到数据库
                 analysis_id = self.db.save_analysis(
                     stock_id, rating, confidence, current_price, target_price,
-                    entry_min, entry_max, take_profit, stop_loss, summary
+                    entry_min, entry_max, take_profit, stop_loss, summary,
+                    operation_advice=operation_advice,
+                    holding_period=holding_period,
+                    position_size=position_size,
+                    risk_warning=risk_warning,
+                    final_decision_json=final_decision_json,
+                    review_status=review.get("review_status", ""),
+                    review_summary=review.get("review_summary", ""),
+                    review_json=review_json
                 )
                 saved_ids.append(analysis_id)
+                result["portfolio_review"] = review
+                result["portfolio_analysis_id"] = analysis_id
                 
             except Exception as e:
                 print(f"[ERROR] 保存分析结果失败 ({code}): {str(e)}")

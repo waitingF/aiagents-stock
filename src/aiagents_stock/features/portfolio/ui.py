@@ -5,6 +5,7 @@
 提供持仓股票的增删改查、批量分析、定时任务管理界面
 """
 
+import json
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -12,6 +13,7 @@ from typing import List, Dict
 import time
 
 from src.aiagents_stock.features.portfolio.manager import portfolio_manager
+from src.aiagents_stock.features.portfolio.review import extract_first_price_range
 from src.aiagents_stock.features.portfolio.scheduler import portfolio_scheduler
 
 
@@ -362,15 +364,8 @@ def display_batch_analysis():
                             take_profit_str = final_decision.get("take_profit", "")
                             stop_loss_str = final_decision.get("stop_loss", "")
                             
-                            # 解析进场区间（格式如"10.5-12.3"）
-                            entry_min, entry_max = None, None
-                            if entry_range and isinstance(entry_range, str) and "-" in entry_range:
-                                try:
-                                    parts = entry_range.split("-")
-                                    entry_min = float(parts[0].strip())
-                                    entry_max = float(parts[1].strip())
-                                except:
-                                    pass
+                            # 解析进场区间，兼容带说明和多区间的AI输出
+                            entry_min, entry_max = extract_first_price_range(entry_range)
                             
                             # 解析止盈止损（提取数字）
                             import re
@@ -448,6 +443,14 @@ def display_analysis_result_card(item: Dict):
         entry_range = final_decision.get("entry_range", "N/A")
         take_profit = final_decision.get("take_profit", "N/A")
         stop_loss = final_decision.get("stop_loss", "N/A")
+        operation_advice = final_decision.get(
+            "operation_advice",
+            final_decision.get("advice", final_decision.get("summary", ""))
+        )
+        holding_period = final_decision.get("holding_period", "N/A")
+        position_size = final_decision.get("position_size", "N/A")
+        risk_warning = final_decision.get("risk_warning", "")
+        review = result.get("portfolio_review", {})
         
         # 评级颜色
         if "强烈买入" in rating or "买入" in rating:
@@ -469,12 +472,20 @@ def display_analysis_result_card(item: Dict):
                 st.markdown("**风控位置**")
                 st.write(f"止盈位: {take_profit}")
                 st.write(f"止损位: {stop_loss}")
+                st.write(f"持有周期: {holding_period}")
+                st.write(f"仓位建议: {position_size}")
             
             # 投资建议
-            advice = final_decision.get("advice", "")
-            if advice:
+            if operation_advice:
                 st.markdown("**投资建议**")
-                st.info(advice)
+                st.info(operation_advice)
+
+            if risk_warning:
+                st.markdown("**风险提示**")
+                st.warning(risk_warning)
+
+            if review:
+                display_review_section(review)
     
     else:
         # 分析失败
@@ -715,6 +726,73 @@ def display_analysis_history():
         display_history_record(record)
 
 
+def parse_review_json(record: Dict) -> Dict:
+    """解析历史记录中的复盘JSON。"""
+    review_json = record.get("review_json")
+    if not review_json:
+        return {}
+
+    if isinstance(review_json, dict):
+        return review_json
+
+    try:
+        parsed = json.loads(review_json)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def get_review_status_icon(status: str) -> str:
+    """获取复盘状态图标。"""
+    return {
+        "兑现": "🟢",
+        "部分兑现": "🟡",
+        "失效": "🔴",
+        "待验证": "⚪",
+        "首次分析": "🔵",
+    }.get(status or "", "⚪")
+
+
+def display_review_section(review: Dict):
+    """显示复盘信息区块。"""
+    if not review:
+        return
+
+    status = review.get("review_status", "待验证")
+    st.markdown(f"**复盘信息** {get_review_status_icon(status)} {status}")
+
+    summary = review.get("review_summary")
+    if summary:
+        st.info(summary)
+
+    review_col1, review_col2 = st.columns(2)
+    with review_col1:
+        plan_check = review.get("plan_check")
+        price_review = review.get("price_review")
+        if plan_check:
+            st.write(f"计划检查: {plan_check}")
+        if price_review:
+            st.write(f"价格复盘: {price_review}")
+
+    with review_col2:
+        logic_change = review.get("logic_change")
+        action_adjustment = review.get("action_adjustment")
+        if logic_change:
+            st.write(f"逻辑变化: {logic_change}")
+        if action_adjustment:
+            st.write(f"本次调整: {action_adjustment}")
+
+    risk_change = review.get("risk_change")
+    if risk_change:
+        st.caption(f"风险变化: {risk_change}")
+
+    watchpoints = review.get("next_watchpoints") or []
+    if watchpoints:
+        st.markdown("**下次关注点**")
+        for point in watchpoints:
+            st.write(f"- {point}")
+
+
 def display_history_record(record: Dict):
     """显示单条历史记录"""
     
@@ -729,7 +807,13 @@ def display_history_record(record: Dict):
     entry_max = record.get("entry_max")
     take_profit = record.get("take_profit")
     stop_loss = record.get("stop_loss")
-    summary = record.get("summary", "")
+    operation_advice = record.get("operation_advice") or record.get("summary", "")
+    holding_period = record.get("holding_period")
+    position_size = record.get("position_size")
+    risk_warning = record.get("risk_warning")
+    review = parse_review_json(record)
+    review_status = record.get("review_status") or review.get("review_status", "")
+    review_summary = record.get("review_summary") or review.get("review_summary", "")
     
     # 评级颜色
     if "强烈买入" in rating or "买入" in rating:
@@ -743,7 +827,7 @@ def display_history_record(record: Dict):
         f"{rating_icon} {code} {name} - {rating} | {analysis_time}",
         expanded=False
     ):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.markdown("**价格信息**")
@@ -763,9 +847,28 @@ def display_history_record(record: Dict):
                 st.write(f"止盈: ¥{take_profit:.2f}")
             if stop_loss:
                 st.write(f"止损: ¥{stop_loss:.2f}")
+
+        with col4:
+            st.markdown("**持仓建议**")
+            if holding_period:
+                st.write(f"周期: {holding_period}")
+            if position_size:
+                st.write(f"仓位: {position_size}")
+            if review_status:
+                st.write(f"复盘: {get_review_status_icon(review_status)} {review_status}")
         
-        if summary:
-            st.markdown("**分析摘要**")
-            st.info(summary)
+        if operation_advice:
+            st.markdown("**操作建议**")
+            st.info(operation_advice)
+
+        if risk_warning:
+            st.markdown("**风险提示**")
+            st.warning(risk_warning)
+
+        if review:
+            display_review_section(review)
+        elif review_summary:
+            st.markdown("**复盘信息**")
+            st.info(review_summary)
         
         st.caption(f"信心度: {confidence}/10")

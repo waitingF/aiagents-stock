@@ -83,6 +83,9 @@ class PortfolioDB:
                 CREATE INDEX IF NOT EXISTS idx_portfolio_analysis_time 
                 ON portfolio_analysis_history(analysis_time DESC)
             ''')
+
+            # 兼容老数据库：为持仓复盘和完整决策补充新增字段
+            self._ensure_analysis_history_columns(cursor)
             
             conn.commit()
             print(f"[OK] 数据库初始化成功: {self.db_path}")
@@ -93,6 +96,28 @@ class PortfolioDB:
             raise
         finally:
             conn.close()
+
+    def _ensure_analysis_history_columns(self, cursor):
+        """为已存在的分析历史表补充新增字段。"""
+        cursor.execute("PRAGMA table_info(portfolio_analysis_history)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        columns = {
+            "operation_advice": "TEXT",
+            "holding_period": "TEXT",
+            "position_size": "TEXT",
+            "risk_warning": "TEXT",
+            "final_decision_json": "TEXT",
+            "review_status": "TEXT",
+            "review_summary": "TEXT",
+            "review_json": "TEXT",
+        }
+
+        for column, column_type in columns.items():
+            if column not in existing_columns:
+                cursor.execute(
+                    f"ALTER TABLE portfolio_analysis_history ADD COLUMN {column} {column_type}"
+                )
     
     # ==================== 持仓股票CRUD操作 ====================
     
@@ -354,7 +379,11 @@ class PortfolioDB:
                      current_price: float, target_price: Optional[float] = None,
                      entry_min: Optional[float] = None, entry_max: Optional[float] = None,
                      take_profit: Optional[float] = None, stop_loss: Optional[float] = None,
-                     summary: str = "") -> int:
+                     summary: str = "", operation_advice: str = "",
+                     holding_period: str = "", position_size: str = "",
+                     risk_warning: str = "", final_decision_json: str = "",
+                     review_status: str = "", review_summary: str = "",
+                     review_json: str = "") -> int:
         """
         保存分析历史记录
         
@@ -369,6 +398,14 @@ class PortfolioDB:
             take_profit: 止盈位
             stop_loss: 止损位
             summary: 分析摘要
+            operation_advice: 操作建议
+            holding_period: 持有周期
+            position_size: 仓位建议
+            risk_warning: 风险提示
+            final_decision_json: 完整最终决策JSON
+            review_status: 复盘状态
+            review_summary: 复盘摘要
+            review_json: 完整复盘JSON
             
         Returns:
             新增分析记录的ID
@@ -380,10 +417,14 @@ class PortfolioDB:
             cursor.execute('''
                 INSERT INTO portfolio_analysis_history 
                 (portfolio_stock_id, analysis_time, rating, confidence, current_price,
-                 target_price, entry_min, entry_max, take_profit, stop_loss, summary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 target_price, entry_min, entry_max, take_profit, stop_loss, summary,
+                 operation_advice, holding_period, position_size, risk_warning,
+                 final_decision_json, review_status, review_summary, review_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (stock_id, datetime.now(), rating, confidence, current_price,
-                  target_price, entry_min, entry_max, take_profit, stop_loss, summary))
+                  target_price, entry_min, entry_max, take_profit, stop_loss, summary,
+                  operation_advice, holding_period, position_size, risk_warning,
+                  final_decision_json, review_status, review_summary, review_json))
             
             conn.commit()
             analysis_id = cursor.lastrowid
@@ -557,6 +598,9 @@ class PortfolioDB:
                     s.*,
                     h.rating, h.confidence, h.current_price, h.target_price,
                     h.entry_min, h.entry_max, h.take_profit, h.stop_loss,
+                    h.summary, h.operation_advice, h.holding_period,
+                    h.position_size, h.risk_warning, h.final_decision_json,
+                    h.review_status, h.review_summary, h.review_json,
                     h.analysis_time
                 FROM portfolio_stocks s
                 LEFT JOIN (

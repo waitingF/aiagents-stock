@@ -397,7 +397,8 @@ class PortfolioManager:
     def batch_analyze_portfolio(self, mode="sequential", period="1y",
                                 selected_agents: List[str] = None,
                                 max_workers: int = 3,
-                                progress_callback=None) -> Dict:
+                                progress_callback=None,
+                                stock_codes: List[str] = None) -> Dict:
         """
         批量分析所有持仓股票
         
@@ -420,7 +421,18 @@ class PortfolioManager:
                 "error": "没有持仓股票"
             }
         
-        stock_codes = [stock['code'] for stock in stocks]
+        available_codes = [stock['code'] for stock in stocks]
+        if stock_codes is None:
+            stock_codes = available_codes
+        else:
+            selected_set = {code.strip().upper() for code in stock_codes if code and code.strip()}
+            stock_codes = [code for code in available_codes if code in selected_set]
+
+        if not stock_codes:
+            return {
+                "success": False,
+                "error": "没有选择可分析的持仓股票"
+            }
         
         # 根据模式选择分析方法
         if mode == "parallel":

@@ -53,8 +53,7 @@ class SmartMonitorDataFetcher:
         if tushare_token:
             try:
                 import tushare as ts
-                ts.set_token(tushare_token)
-                self.ts_pro = ts.pro_api()
+                self.ts_pro = ts.pro_api(tushare_token)
                 self.logger.info("Tushare备用数据源初始化成功")
             except Exception as e:
                 self.logger.warning(f"Tushare初始化失败: {e}")

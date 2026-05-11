@@ -309,8 +309,8 @@ class SectorStrategyDataFetcher:
                 if TUSHARE_TOKEN:
                     try:
                         import tushare as ts
-                        ts.set_token(tushare_token)
-                        self.ts_pro = ts.pro_api()
+                        self._tushare_api = ts.pro_api(tushare_token)
+                        self.ts_pro = self._tushare_api
                         print("    [Tushare] ✅ 初始化成功")
                     except Exception as e:
                         print(f"    [Tushare] 初始化失败: {e}")

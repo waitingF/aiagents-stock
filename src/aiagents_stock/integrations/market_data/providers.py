@@ -24,8 +24,7 @@ class DataSourceManager:
         if self.tushare_token:
             try:
                 import tushare as ts
-                ts.set_token(self.tushare_token)
-                self.tushare_api = ts.pro_api()
+                self.tushare_api = ts.pro_api(self.tushare_token)
                 self.tushare_available = True
                 print("✅ Tushare数据源初始化成功")
             except Exception as e:

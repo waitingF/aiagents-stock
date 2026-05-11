@@ -231,6 +231,23 @@ def display_add_stock_form():
                     st.error(f"添加失败: {str(e)}")
 
 
+def _format_latest_analysis_label(latest: Dict) -> str:
+    if not latest:
+        return "未分析"
+
+    analysis_time = str(latest.get("analysis_time", ""))[:16]
+    rating = latest.get("rating", "")
+    if analysis_time and rating:
+        return f"{analysis_time} | {rating}"
+    return analysis_time or rating or "已分析"
+
+
+def _build_stock_option_label(stock: Dict, latest: Dict) -> str:
+    code = stock.get("code", "")
+    name = stock.get("name", "")
+    return f"{code} {name} - {_format_latest_analysis_label(latest)}"
+
+
 def display_batch_analysis():
     """显示批量分析功能"""
     
@@ -267,6 +284,52 @@ def display_batch_analysis():
             )
         else:
             max_workers = 1
+
+    latest_by_code = {
+        stock.get("code", ""): portfolio_manager.get_latest_analysis(stock.get("id"))
+        for stock in stocks
+    }
+    stock_by_code = {stock.get("code", ""): stock for stock in stocks}
+    all_codes = [stock.get("code", "") for stock in stocks]
+    unanalysed_codes = [
+        code for code in all_codes
+        if not latest_by_code.get(code)
+    ]
+
+    st.markdown("#### 分析范围")
+    scope = st.radio(
+        "选择本次要分析的持仓",
+        options=["unanalysed", "custom", "all"],
+        format_func=lambda value: {
+            "unanalysed": "仅未分析",
+            "custom": "自定义",
+            "all": "全部持仓"
+        }[value],
+        horizontal=True,
+        help="默认只分析没有历史分析记录的持仓，避免重复消耗时间和模型资源。"
+    )
+
+    if scope == "all":
+        selected_codes = all_codes
+    elif scope == "unanalysed":
+        selected_codes = unanalysed_codes
+    else:
+        selected_codes = st.multiselect(
+            "指定股票",
+            options=all_codes,
+            default=unanalysed_codes,
+            format_func=lambda code: _build_stock_option_label(
+                stock_by_code.get(code, {}),
+                latest_by_code.get(code)
+            ),
+            help="已分析过的股票也可以手动勾选重新分析。"
+        )
+
+    selected_count = len(selected_codes)
+    if selected_count:
+        st.caption(f"本次将分析 {selected_count} / {len(stocks)} 只持仓股票")
+    else:
+        st.warning("当前范围没有可分析股票，请切换到“自定义”或“全部持仓”。")
     
     st.markdown("---")
     
@@ -288,7 +351,7 @@ def display_batch_analysis():
         )
     
     # 立即分析按钮
-    if st.button("🚀 立即开始分析", type="primary", width='content'):
+    if st.button("🚀 立即开始分析", type="primary", width='content', disabled=(selected_count == 0)):
         with st.spinner("正在批量分析持仓股票..."):
             # 显示进度
             progress_bar = st.progress(0)
@@ -310,12 +373,17 @@ def display_batch_analysis():
                 result = portfolio_manager.batch_analyze_portfolio(
                     mode=analysis_mode,
                     max_workers=max_workers,
+                    stock_codes=selected_codes,
                     progress_callback=update_progress
                 )
                 
                 # 清除进度显示
                 progress_bar.empty()
                 status_text.empty()
+
+                if not result.get("success"):
+                    st.error(result.get("error", "批量分析失败"))
+                    return
                 
                 # 显示结果
                 st.success(f"✅ 批量分析完成！")

@@ -15,6 +15,23 @@ from src.aiagents_stock.features.stock_analysis.service import analyze_single_st
 import src.aiagents_stock.core.config as config
 
 
+def _extract_first_price_range(price_text) -> tuple:
+    """Extract the first two numeric prices from a model-generated range."""
+    import re
+
+    if not price_text:
+        return None, None
+
+    numbers = re.findall(r'\d+(?:\.\d+)?', str(price_text))
+    if len(numbers) < 2:
+        return None, None
+
+    try:
+        return float(numbers[0]), float(numbers[1])
+    except (ValueError, TypeError):
+        return None, None
+
+
 class PortfolioManager:
     """持仓管理器类"""
     
@@ -446,15 +463,9 @@ class PortfolioManager:
                 except:
                     pass
             
-            # 解析进场区间
-            entry_min, entry_max = None, None
-            if entry_range and isinstance(entry_range, str) and "-" in entry_range:
-                try:
-                    parts = entry_range.split("-")
-                    entry_min = float(parts[0].strip())
-                    entry_max = float(parts[1].strip())
-                except:
-                    pass
+            # 解析进场区间：AI 可能返回“37.90-38.50（激进试探）；确认加仓参考39.03-39.85”
+            # 这类带说明和多区间的文本，保存历史时取第一组价格范围。
+            entry_min, entry_max = _extract_first_price_range(entry_range)
             
             # 解析止盈止损
             take_profit, stop_loss = None, None

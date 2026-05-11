@@ -457,7 +457,7 @@ def display_analysis_result_card(item: Dict):
         else:
             rating_color = "🟡"
         
-        with st.expander(f"{rating_color} {code} {stock_info.get('name', '')} - {rating} (信心度: {confidence})"):
+        with st.expander(f"{rating_color} {code} {stock_info.get('name', '')} - {rating} (信心度: {confidence}/10)"):
             col1, col2 = st.columns(2)
             
             with col1:
@@ -768,5 +768,4 @@ def display_history_record(record: Dict):
             st.markdown("**分析摘要**")
             st.info(summary)
         
-        st.caption(f"置信度: {confidence}%")
-
+        st.caption(f"信心度: {confidence}/10")

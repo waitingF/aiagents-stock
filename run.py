@@ -27,15 +27,15 @@ def check_requirements():
 def check_config():
     """检查配置文件"""
     try:
-        import config
+        import src.aiagents_stock.core.config as config
         if not config.DEEPSEEK_API_KEY:
             print("⚠️  警告: DeepSeek API Key 未配置")
-            print("请在config.py中设置 DEEPSEEK_API_KEY")
+            print("请在.env中设置 DEEPSEEK_API_KEY")
             return False
         print("✅ 配置文件检查通过")
         return True
     except ImportError:
-        print("❌ 配置文件config.py不存在")
+        print("❌ 无法加载配置模块 src.aiagents_stock.core.config")
         return False
 
 def main():

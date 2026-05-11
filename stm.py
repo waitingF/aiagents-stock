@@ -1,72 +1,112 @@
-# 1. 删除带 \r 的旧文件
-rm -f /www/wwwroot/aiagents-stock/stm /www/wwwroot/aiagents-stock/stm.py
-
-# 2. 重新写入（纯 Unix 换行）
-cat > /www/wwwroot/aiagents-stock/stm << 'EOF'
 #!/usr/bin/env python3
-import os, time, signal, subprocess, psutil
+"""Streamlit process manager for server deployments."""
 
-APP_NAME  = "app.py"
+from __future__ import annotations
+
+import os
+import signal
+import subprocess
+import time
+
+import psutil
+from src.aiagents_stock.core.paths import log_path
+
+
+APP_NAME = "app.py"
+APP_PATH = "/www/wwwroot/aiagents-stock"
 VENV_PATH = "/www/wwwroot/aiagents-stock/venv"
-APP_PATH  = "/www/wwwroot/aiagents-stock"
-PORT      = 8501
-STR = os.path.join(VENV_PATH, "bin", "streamlit")
-LOG = os.path.join(APP_PATH, "app.log")
+PORT = 8501
+STREAMLIT_BIN = os.path.join(VENV_PATH, "bin", "streamlit")
+LOG_PATH = str(log_path("app.log"))
 
-def is_run():
-    for p in psutil.process_iter(['cmdline']):
-        if p.info['cmdline'] and 'streamlit' in ' '.join(p.info['cmdline']) and 'run' in p.info['cmdline']:
-            return p.pid
+
+def is_run() -> int | None:
+    """Return the Streamlit process pid if the app is running."""
+    for process in psutil.process_iter(["cmdline"]):
+        cmdline = process.info.get("cmdline") or []
+        cmdline_text = " ".join(cmdline)
+        if "streamlit" in cmdline_text and "run" in cmdline:
+            return process.pid
     return None
 
-def start():
+
+def start() -> None:
+    """Start the Streamlit app."""
     if is_run():
-        print("⚠️  已在运行"); return
+        print("⚠️  已在运行")
+        return
+
     os.chdir(APP_PATH)
-    with open(LOG, "a") as f:
-        subprocess.Popen(["nohup", STR, "run", APP_NAME,
-                          "--server.port", str(PORT),
-                          "--server.address", "0.0.0.0",
-                          "--server.headless", "true"],
-                         stdout=f, stderr=f, preexec_fn=os.setsid)
+    with open(LOG_PATH, "a", encoding="utf-8") as log_file:
+        subprocess.Popen(
+            [
+                STREAMLIT_BIN,
+                "run",
+                APP_NAME,
+                "--server.port",
+                str(PORT),
+                "--server.address",
+                "0.0.0.0",
+                "--server.headless",
+                "true",
+            ],
+            stdout=log_file,
+            stderr=log_file,
+            preexec_fn=os.setsid,
+        )
+
     time.sleep(3)
     print("✅ 启动成功 | http://服务器IP:8501")
 
-def stop():
+
+def stop() -> None:
+    """Stop the Streamlit app."""
     pid = is_run()
     if not pid:
-        print("⚠️  未运行"); return
+        print("⚠️  未运行")
+        return
+
     os.kill(pid, signal.SIGTERM)
     time.sleep(2)
     if is_run():
         os.kill(pid, signal.SIGKILL)
     print("✅ 已停止")
 
-menu = """1) 启动  2) 停止  3) 重启  4) 状态  5) 日志  0) 退出"""
-def main():
+
+def show_status() -> None:
+    """Print current running status."""
+    print("✅ 运行中" if is_run() else "❌ 未运行")
+
+
+def show_logs() -> None:
+    """Show the latest deployment log lines."""
+    os.system("tail -n 50 " + LOG_PATH)
+
+
+def main() -> None:
+    """Interactive command menu."""
+    menu = "1) 启动  2) 停止  3) 重启  4) 状态  5) 日志  0) 退出"
     while True:
         print(menu)
-        c = input("选 > ").strip()
-        if c == '1': start()
-        elif c == '2': stop()
-        elif c == '3': stop(); time.sleep(2); start()
-        elif c == '4':
-            pid = is_run()
-            print("✅ 运行中" if pid else "❌ 未运行")
-        elif c == '5': os.system("tail -n 50 " + LOG)
-        elif c == '0': break
-        else: print("无效")
+        choice = input("选 > ").strip()
+        if choice == "1":
+            start()
+        elif choice == "2":
+            stop()
+        elif choice == "3":
+            stop()
+            time.sleep(2)
+            start()
+        elif choice == "4":
+            show_status()
+        elif choice == "5":
+            show_logs()
+        elif choice == "0":
+            break
+        else:
+            print("无效")
         input("\n回车继续 …")
 
-if __name__ == "__main__": main()
-EOF
 
-# 3. 赋可执行权限
-chmod +x /www/wwwroot/aiagents-stock/stm
-
-# 4. 确保 PATH 包含当前目录（已加可忽略）
-echo 'export PATH="/www/wwwroot/aiagents-stock:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-
-# 5. 运行
-stm
+if __name__ == "__main__":
+    main()

@@ -11,6 +11,7 @@ from datetime import datetime
 
 # 导入必要的模块
 from src.aiagents_stock.features.portfolio.repository import portfolio_db
+from src.aiagents_stock.features.stock_analysis.service import analyze_single_stock_for_batch
 import src.aiagents_stock.core.config as config
 
 
@@ -139,9 +140,6 @@ class PortfolioManager:
         print(f"{'='*60}\n")
         
         try:
-            # 导入app.py中的分析函数
-            from app import analyze_single_stock_for_batch
-            
             # 构建分析师配置
             if selected_agents is None:
                 enabled_analysts_config = {
@@ -535,4 +533,3 @@ if __name__ == "__main__":
         print(f"  {stock['code']} {stock['name']} - 成本:{stock['cost_price']}, 数量:{stock['quantity']}")
     
     print("\n[OK] 持仓管理器测试完成")
-

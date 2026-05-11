@@ -15,7 +15,10 @@ TradEnv/
 
 # running data
 /data
+/logs
 *.db
 *.sqlite
 *.log
 risk_data_debug_output.txt
+__pycache__/
+*.py[cod]

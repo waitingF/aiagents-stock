@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 import unittest
+from unittest.mock import patch
 
 from src.aiagents_stock.integrations.market_data.cache import LocalDataCache
 from src.aiagents_stock.integrations.market_data.providers import DataSourceManager
+from src.aiagents_stock.integrations.stock_data_store.service import StockDataStoreService
 
 
 class FakeTushareApi:
@@ -108,10 +110,12 @@ class TushareCacheAndProviderTest(unittest.TestCase):
     def test_data_source_manager_uses_tushare_and_normalizes_daily(self):
         fake_api = FakeTushareApi()
         cache = LocalDataCache(self.tmpdir, today_provider=lambda: "2026-05-12")
-        manager = DataSourceManager(tushare_api=fake_api, cache=cache, start_cache_scheduler=False)
+        empty_store = StockDataStoreService(data_root=f"{self.tmpdir}/empty_stock_data")
 
-        df = manager.get_stock_hist_data("000001", start_date="20260501", end_date="20260512", adjust="")
-        second = manager.get_stock_hist_data("000001", start_date="20260501", end_date="20260512", adjust="")
+        with patch("src.aiagents_stock.integrations.market_data.providers.stock_data_store_service", empty_store):
+            manager = DataSourceManager(tushare_api=fake_api, cache=cache, start_cache_scheduler=False)
+            df = manager.get_stock_hist_data("000001", start_date="20260501", end_date="20260512", adjust="")
+            second = manager.get_stock_hist_data("000001", start_date="20260501", end_date="20260512", adjust="")
 
         self.assertEqual(fake_api.daily_calls, 1)
         self.assertEqual(df.iloc[0]["date"], pd.Timestamp("2026-05-11"))

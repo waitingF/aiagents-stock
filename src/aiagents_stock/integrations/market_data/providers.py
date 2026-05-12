@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from typing import Optional
 
 from src.aiagents_stock.integrations.market_data.cache import LocalDataCache
+from src.aiagents_stock.integrations.stock_data_store.service import stock_data_store_service
 
 # 加载环境变量
 load_dotenv()
@@ -63,6 +64,16 @@ class DataSourceManager:
             end_date = end_date.replace('-', '')
         else:
             end_date = datetime.now().strftime('%Y%m%d')
+
+        # 优先读取全市场本地日线仓库。该仓库由 stock-data-store submodule
+        # 批量更新，适合选股和历史K线读取，不依赖本次请求访问远端接口。
+        try:
+            local_df = stock_data_store_service.read_daily(symbol, start_date=start_date, end_date=end_date)
+            if local_df is not None and not local_df.empty:
+                print(f"[StockDataStore] ✅ 从本地日线仓库读取 {symbol} 共 {len(local_df)} 条数据")
+                return local_df
+        except Exception as e:
+            print(f"[StockDataStore] 本地日线仓库读取失败，尝试远端数据源: {e}")
         
         # 优先使用Tushare，并写入每日本地缓存
         if self.tushare_available:

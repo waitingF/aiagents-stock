@@ -10,6 +10,15 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 # Tushare数据源配置（备用数据源）
 TUSHARE_TOKEN=your_tushare_token_here
 
+# 全市场本地数据仓库配置（使用 vendor/stock-data-store）
+STOCK_DATA_ADJ=qfq
+STOCK_DATA_MAX_WORKERS=4
+STOCK_DATA_REQUESTS_PER_SECOND=4.0
+STOCK_DATA_UNIVERSE_INCLUDE_ST=false
+STOCK_DATA_UNIVERSE_MIN_LIST_DAYS=120
+STOCK_DATA_ADJUSTMENT_DETECT_ENABLED=true
+STOCK_DATA_ADJUSTMENT_PRICE_TOLERANCE=0.001
+
 # TDX股票数据API配置（优先数据源）
 # 启用TDX数据源：true=启用，false=禁用（使用AKShare）
 TDX_ENABLED=false
@@ -47,4 +56,3 @@ DINGTALK_KEYWORD=股票
 
 # 数据库配置（可选）
 # DATABASE_URL=sqlite:///./agentsstock1.db
-

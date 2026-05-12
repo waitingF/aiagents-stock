@@ -13,6 +13,7 @@
 | [UNIFIED_ANALYSIS_SPEC.md](UNIFIED_ANALYSIS_SPEC.md) | 统一股票分析调用规范 ⭐️ |
 | [外部数据源总览.md](外部数据源总览.md) | 项目外部数据源、接口、配置和降级链路总览 ⭐️ |
 | [AKShare与Tushare替代检查.md](AKShare与Tushare替代检查.md) | AKShare 调用与 Tushare 替代覆盖检查 ⭐️ |
+| [全市场本地数据仓库说明.md](全市场本地数据仓库说明.md) | 全市场日 K 线、基本面本地缓存与更新说明 ⭐️ |
 | [UPDATE_LOG.md](UPDATE_LOG.md) | 功能更新日志 |
 
 ### 🎯 智策板块文档
@@ -118,6 +119,7 @@
 - **持仓分析**：[PORTFOLIO_USAGE.md](PORTFOLIO_USAGE.md)
 - **外部数据源**：[外部数据源总览.md](外部数据源总览.md)
 - **AKShare/Tushare替代检查**：[AKShare与Tushare替代检查.md](AKShare与Tushare替代检查.md)
+- **全市场本地数据仓库**：[全市场本地数据仓库说明.md](全市场本地数据仓库说明.md)
 - **智策板块**：[智策板块使用指南.md](智策板块使用指南.md)
 - **智瞰龙虎**：[智瞰龙虎功能说明.md](智瞰龙虎功能说明.md)
 - **批量分析**：[LONGHUBANG_BATCH_ANALYSIS.md](LONGHUBANG_BATCH_ANALYSIS.md)

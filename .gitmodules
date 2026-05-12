@@ -1,0 +1,3 @@
+[submodule "vendor/stock-data-store"]
+	path = vendor/stock-data-store
+	url = git@github.com:waitingF/stock-data-store.git

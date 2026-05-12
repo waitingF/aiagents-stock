@@ -642,10 +642,19 @@ docker-compose restart
 - DeepSeek API Key
 
 ### 2. 安装依赖
-创建激活虚拟环境（powershell）并安装依赖
+创建并激活虚拟环境，然后安装依赖。
+
+**Windows PowerShell：**
 ```bash
 python -m venv venv
 .\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+**macOS / Linux / Unix：**
+```bash
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -657,7 +666,7 @@ pip install -r requirements.txt
 # Windows (PowerShell)
 Copy-Item .env.example .env
 
-# 或者使用命令
+# macOS / Linux / Unix
 cp .env.example .env
 ```
 
@@ -703,18 +712,34 @@ MINIQMT_PORT=58610
 **注意**：环境变量文件的优先级高于系统环境变量。
 
 ### 4. 启动系统
+**Windows PowerShell：**
 ```bash
 .\venv\Scripts\Activate.ps1
 python run.py
 ```
+
+**macOS / Linux / Unix：**
+```bash
+source venv/bin/activate
+python run.py
+```
+
 或者直接运行：
+
+**Windows PowerShell：**
 ```bash
 .\venv\Scripts\Activate.ps1
-streamlit run app.py
+streamlit run app.py --server.port 8503
+```
+
+**macOS / Linux / Unix：**
+```bash
+source venv/bin/activate
+streamlit run app.py --server.port 8503
 ```
 
 ### 5. 访问系统
-打开浏览器访问：http://localhost:8501
+打开浏览器访问：http://localhost:8503
 
 ---
 

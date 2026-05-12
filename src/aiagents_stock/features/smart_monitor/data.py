@@ -1,7 +1,7 @@
 """
 智能盯盘 - A股数据获取模块
-使用TDX/akshare获取实时行情和技术指标
-支持降级到tushare作为备用数据源
+使用TDX/Tushare/AKShare获取实时行情和技术指标
+技术指标优先使用Tushare每日缓存，实时分钟行情保留AKShare降级源
 """
 
 import logging
@@ -11,9 +11,11 @@ import pandas as pd
 from typing import Dict, Optional
 from datetime import datetime, timedelta
 
+from src.aiagents_stock.integrations.market_data.providers import data_source_manager
+
 
 class SmartMonitorDataFetcher:
-    """A股数据获取器（支持多数据源降级：TDX -> AKShare -> Tushare）"""
+    """A股数据获取器（支持多数据源降级：TDX -> Tushare/缓存 -> AKShare）"""
     
     def __init__(self, use_tdx: bool = None, tdx_base_url: str = None):
         """
@@ -200,7 +202,25 @@ class SmartMonitorDataFetcher:
             except Exception as e:
                 self.logger.warning(f"TDX计算技术指标异常 {stock_code}: {e}，尝试降级到AKShare")
         
-        # 方法2: 尝试使用AKShare
+        # 方法2: 尝试使用Tushare日线缓存
+        try:
+            end_date = datetime.now().strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=300)).strftime('%Y%m%d')
+            df = data_source_manager.get_stock_hist_data(
+                symbol=stock_code,
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq",
+            )
+            df = self._normalize_hist_for_indicators(df)
+            if df is not None and len(df) >= 60:
+                self.logger.info(f"✅ Tushare/缓存获取历史数据成功 {stock_code}，共{len(df)}条")
+                return self._calculate_all_indicators(df, stock_code)
+            self.logger.warning(f"Tushare/缓存历史数据不足 {stock_code}，尝试降级到AKShare")
+        except Exception as e:
+            self.logger.warning(f"Tushare/缓存获取历史数据失败 {stock_code}: {type(e).__name__}: {str(e)[:50]}，尝试AKShare")
+
+        # 方法3: 尝试使用AKShare
         for attempt in range(retry):
             try:
                 # 获取历史数据（最近200个交易日，用于计算指标）
@@ -236,13 +256,29 @@ class SmartMonitorDataFetcher:
                     self.logger.warning(f"AKShare获取历史数据失败 {stock_code}（已重试{retry}次），尝试降级到Tushare")
                     break
         
-        # 方法3: 降级到Tushare
+        # 方法4: 兼容旧Tushare降级路径
         if self.ts_pro:
             self.logger.info(f"降级到Tushare获取 {stock_code} 历史数据...")
             return self._get_technical_indicators_from_tushare(stock_code, period)
         else:
             self.logger.error(f"AKShare失败且未配置Tushare，无法获取 {stock_code} 技术指标")
             return None
+
+    def _normalize_hist_for_indicators(self, df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+        """Normalize historical data columns to the AKShare-style indicator input."""
+        if df is None or df.empty:
+            return df
+        df = df.copy()
+        df = df.rename(columns={
+            'date': '日期',
+            'open': '开盘',
+            'high': '最高',
+            'low': '最低',
+            'close': '收盘',
+            'volume': '成交量',
+            'amount': '成交额',
+        })
+        return df
     
     def _calculate_all_indicators(self, df: pd.DataFrame, stock_code: str) -> Optional[Dict]:
         """
@@ -438,6 +474,11 @@ class SmartMonitorDataFetcher:
         """
         import time
         
+        if data_source_manager.tushare_available:
+            result = self._get_main_force_from_tushare(stock_code)
+            if result:
+                return result
+
         for attempt in range(retry):
             try:
                 # 获取个股资金流（新版AKShare API参数调整）
@@ -821,4 +862,3 @@ if __name__ == '__main__':
             print("\n主力资金:")
             print(f"  主力净额: {data['main_force']['main_net']:.2f}万")
             print(f"  主力动向: {data['main_force']['trend']}")
-

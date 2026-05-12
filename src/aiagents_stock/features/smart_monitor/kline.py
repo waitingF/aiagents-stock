@@ -341,7 +341,36 @@ class SmartMonitorKline:
             end_date = datetime.now().strftime('%Y%m%d')
             start_date = (datetime.now() - timedelta(days=days + 30)).strftime('%Y%m%d')  # 多取30天以确保足够数据
             
-            # 方法2: 尝试使用AKShare获取（只尝试1次，避免IP封禁）
+            # 方法2: 尝试使用Tushare/本地缓存获取
+            try:
+                from src.aiagents_stock.integrations.market_data.providers import data_source_manager
+                df = data_source_manager.get_stock_hist_data(
+                    symbol=stock_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust='qfq'
+                )
+
+                if df is not None and not df.empty:
+                    df = df.rename(columns={
+                        'date': '日期',
+                        'open': '开盘',
+                        'high': '最高',
+                        'low': '最低',
+                        'close': '收盘',
+                        'volume': '成交量',
+                        'amount': '成交额',
+                    })
+                    # 只保留最近days天的数据
+                    df = df.tail(days)
+                    self.logger.info(f"✅ Tushare/缓存获取K线数据成功 {stock_code}，共{len(df)}条")
+                    return df
+                else:
+                    self.logger.warning(f"Tushare/缓存未返回K线数据 {stock_code}，尝试降级到AKShare")
+            except Exception as e:
+                self.logger.warning(f"Tushare/缓存获取K线数据失败 {stock_code}: {type(e).__name__}, 尝试降级到AKShare")
+
+            # 方法3: 降级到AKShare（只尝试1次，避免IP封禁）
             try:
                 import akshare as ak
                 df = ak.stock_zh_a_hist(
@@ -351,18 +380,17 @@ class SmartMonitorKline:
                     end_date=end_date,
                     adjust='qfq'
                 )
-                
+
                 if df is not None and not df.empty:
-                    # 只保留最近days天的数据
                     df = df.tail(days)
                     self.logger.info(f"✅ AKShare获取K线数据成功 {stock_code}，共{len(df)}条")
                     return df
                 else:
-                    self.logger.warning(f"AKShare未返回K线数据 {stock_code}，尝试降级到Tushare")
+                    self.logger.warning(f"AKShare未返回K线数据 {stock_code}，尝试兼容Tushare降级")
             except Exception as e:
-                self.logger.warning(f"AKShare获取K线数据失败 {stock_code}: {type(e).__name__}, 尝试降级到Tushare")
-            
-            # 方法3: 降级到Tushare
+                self.logger.warning(f"AKShare获取K线数据失败 {stock_code}: {type(e).__name__}, 尝试兼容Tushare降级")
+
+            # 方法4: 兼容旧Tushare降级路径
             if data_fetcher and data_fetcher.ts_pro:
                 self.logger.info(f"降级使用Tushare获取K线数据 {stock_code}")
                 df = self._get_kline_from_tushare(stock_code, days, data_fetcher.ts_pro)
@@ -404,8 +432,9 @@ class SmartMonitorKline:
             end_date = datetime.now().strftime('%Y%m%d')
             start_date = (datetime.now() - timedelta(days=days + 60)).strftime('%Y%m%d')
             
-            # 获取日K线数据（前复权）
-            df = ts_pro.daily(
+            # 获取前复权日K线数据
+            import tushare as ts
+            df = ts.pro_bar(
                 ts_code=ts_code,
                 start_date=start_date,
                 end_date=end_date,
@@ -493,4 +522,3 @@ if __name__ == '__main__':
         print("K线图已保存到 test_kline.html")
     else:
         print("获取K线数据失败")
-

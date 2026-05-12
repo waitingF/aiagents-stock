@@ -1,6 +1,6 @@
 """
 季报数据获取模块
-使用akshare获取个股最近8期季度财务报告
+优先使用Tushare获取个股最近8期季度财务报告，AKShare作为降级源
 """
 
 import pandas as pd
@@ -9,6 +9,7 @@ import io
 import warnings
 from datetime import datetime
 import akshare as ak
+from src.aiagents_stock.integrations.market_data.providers import data_source_manager
 
 warnings.filterwarnings('ignore')
 
@@ -32,12 +33,12 @@ _setup_stdout_encoding()
 
 
 class QuarterlyReportDataFetcher:
-    """季报数据获取类（使用akshare数据源）"""
+    """季报数据获取类（Tushare优先，AKShare降级）"""
     
     def __init__(self):
         self.periods = 8  # 获取最近8期季报
         self.available = True
-        print("✓ 季报数据获取器初始化成功（akshare数据源）")
+        print("✓ 季报数据获取器初始化成功（Tushare优先）")
     
     def get_quarterly_reports(self, symbol):
         """
@@ -56,7 +57,7 @@ class QuarterlyReportDataFetcher:
             "cash_flow": None,             # 现金流量表
             "financial_indicators": None,   # 财务指标
             "data_success": False,
-            "source": "akshare"
+            "source": "tushare" if data_source_manager.tushare_available else "akshare"
         }
         
         # 只支持中国股票
@@ -111,6 +112,13 @@ class QuarterlyReportDataFetcher:
     def _get_income_statement(self, symbol):
         """获取利润表数据"""
         try:
+            df = data_source_manager.get_financial_data(symbol, report_type='income')
+            if df is not None and not df.empty:
+                return self._dataframe_to_payload(df.head(self.periods))
+        except Exception as e:
+            print(f"   Tushare利润表获取异常，尝试AKShare: {e}")
+
+        try:
             # stock_financial_report_sina - 新浪财经季度利润表
             df = ak.stock_financial_report_sina(stock=symbol, symbol="利润表")
             
@@ -149,6 +157,13 @@ class QuarterlyReportDataFetcher:
     
     def _get_balance_sheet(self, symbol):
         """获取资产负债表数据"""
+        try:
+            df = data_source_manager.get_financial_data(symbol, report_type='balance')
+            if df is not None and not df.empty:
+                return self._dataframe_to_payload(df.head(self.periods))
+        except Exception as e:
+            print(f"   Tushare资产负债表获取异常，尝试AKShare: {e}")
+
         try:
             # stock_financial_report_sina - 新浪财经季度资产负债表
             df = ak.stock_financial_report_sina(stock=symbol, symbol="资产负债表")
@@ -189,6 +204,13 @@ class QuarterlyReportDataFetcher:
     def _get_cash_flow(self, symbol):
         """获取现金流量表数据"""
         try:
+            df = data_source_manager.get_financial_data(symbol, report_type='cashflow')
+            if df is not None and not df.empty:
+                return self._dataframe_to_payload(df.head(self.periods))
+        except Exception as e:
+            print(f"   Tushare现金流量表获取异常，尝试AKShare: {e}")
+
+        try:
             # stock_financial_report_sina - 新浪财经季度现金流量表
             df = ak.stock_financial_report_sina(stock=symbol, symbol="现金流量表")
             
@@ -227,6 +249,13 @@ class QuarterlyReportDataFetcher:
     
     def _get_financial_indicators(self, symbol):
         """获取财务指标数据"""
+        try:
+            df = data_source_manager.get_financial_indicator_data(symbol)
+            if df is not None and not df.empty:
+                return self._dataframe_to_payload(df.head(self.periods))
+        except Exception as e:
+            print(f"   Tushare财务指标获取异常，尝试AKShare: {e}")
+
         try:
             # 使用stock_financial_abstract替代已失效的stock_financial_analysis_indicator
             df = ak.stock_financial_abstract(symbol=symbol)
@@ -282,6 +311,29 @@ class QuarterlyReportDataFetcher:
         except Exception as e:
             print(f"   获取财务指标异常: {e}")
             return None
+
+    def _dataframe_to_payload(self, df):
+        """Convert a report DataFrame to the existing payload shape."""
+        if df is None or df.empty:
+            return None
+
+        data_list = []
+        for _, row in df.iterrows():
+            item = {}
+            for col in df.columns:
+                value = row.get(col)
+                if value is None or (isinstance(value, float) and pd.isna(value)):
+                    continue
+                item[col] = str(value)
+            if item:
+                data_list.append(item)
+
+        return {
+            "data": data_list,
+            "periods": len(data_list),
+            "columns": df.columns.tolist(),
+            "query_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
     
     def format_quarterly_reports_for_ai(self, data):
         """
@@ -292,7 +344,7 @@ class QuarterlyReportDataFetcher:
         
         text_parts = []
         text_parts.append(f"""
-【季度财务报告数据 - akshare数据源】
+【季度财务报告数据 - {data.get('source', 'tushare')}数据源】
 股票代码：{data.get('symbol', 'N/A')}
 数据期数：最近{self.periods}期季报
 
@@ -423,4 +475,3 @@ if __name__ == "__main__":
             print(f"\n获取失败: {data.get('error', '未知错误')}")
         
         print("\n")
-

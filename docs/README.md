@@ -11,6 +11,8 @@
 | [PORTFOLIO_USAGE.md](PORTFOLIO_USAGE.md) | 持仓定时分析完整使用指南 ⭐️ |
 | [MULTI_SCHEDULE_GUIDE.md](MULTI_SCHEDULE_GUIDE.md) | 多定时配置指南 |
 | [UNIFIED_ANALYSIS_SPEC.md](UNIFIED_ANALYSIS_SPEC.md) | 统一股票分析调用规范 ⭐️ |
+| [外部数据源总览.md](外部数据源总览.md) | 项目外部数据源、接口、配置和降级链路总览 ⭐️ |
+| [AKShare与Tushare替代检查.md](AKShare与Tushare替代检查.md) | AKShare 调用与 Tushare 替代覆盖检查 ⭐️ |
 | [UPDATE_LOG.md](UPDATE_LOG.md) | 功能更新日志 |
 
 ### 🎯 智策板块文档
@@ -114,6 +116,8 @@
 - **新手入门**：[QUICK_START.md](QUICK_START.md)
 - **Docker部署**：[DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md)
 - **持仓分析**：[PORTFOLIO_USAGE.md](PORTFOLIO_USAGE.md)
+- **外部数据源**：[外部数据源总览.md](外部数据源总览.md)
+- **AKShare/Tushare替代检查**：[AKShare与Tushare替代检查.md](AKShare与Tushare替代检查.md)
 - **智策板块**：[智策板块使用指南.md](智策板块使用指南.md)
 - **智瞰龙虎**：[智瞰龙虎功能说明.md](智瞰龙虎功能说明.md)
 - **批量分析**：[LONGHUBANG_BATCH_ANALYSIS.md](LONGHUBANG_BATCH_ANALYSIS.md)
@@ -147,11 +151,11 @@
 
 ## 📊 文档统计
 
-- **总文档数**：46个
-- **核心文档**：4个
-- **功能文档**：35个
+- **总文档数**：75个
+- **核心文档**：6个
+- **其余文档**：按功能、配置、部署、通知、量化交易和开发主题分类
 - **开发文档**：1个
-- **最后更新**：2024年10月20日
+- **最后更新**：2026年5月12日
 
 ---
 
@@ -164,4 +168,3 @@
 ---
 
 **📝 提示**：所有文档均已从项目根目录迁移至 `docs/` 目录，便于统一管理和查找。
-

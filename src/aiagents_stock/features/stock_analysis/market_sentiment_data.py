@@ -329,10 +329,26 @@ class MarketSentimentDataFetcher:
         }
     
     def _get_turnover_rate(self, symbol):
-        """获取换手率数据（支持akshare和tushare自动切换）"""
+        """获取换手率数据（Tushare优先，AKShare降级）"""
+        if data_source_manager.tushare_available:
+            try:
+                print(f"   [Tushare] 正在获取换手率数据...")
+                df = data_source_manager.get_latest_daily_basic(symbol)
+                if df is not None and not df.empty:
+                    row = df.iloc[0]
+                    turnover_rate = row.get('turnover_rate', 'N/A')
+                    interpretation = self._interpret_turnover_rate(turnover_rate)
+
+                    print(f"   [Tushare] ✅ 成功获取换手率: {turnover_rate}%")
+                    return {
+                        "current_turnover_rate": turnover_rate,
+                        "interpretation": interpretation
+                    }
+            except Exception as te:
+                print(f"   [Tushare] ❌ 获取失败: {te}，尝试AKShare")
+
         try:
-            # 优先使用akshare获取最近的换手率数据
-            print(f"   [Akshare] 正在获取换手率数据...")
+            print(f"   [Akshare] 正在获取换手率数据（备用数据源）...")
             # 获取A股实时行情数据（不需要参数）
             df = ak.stock_zh_a_spot_em()
             if df is not None and not df.empty:
@@ -342,22 +358,7 @@ class MarketSentimentDataFetcher:
                     turnover_rate = row.get('换手率', 'N/A')
                     
                     # 解读换手率
-                    interpretation = ""
-                    if turnover_rate != 'N/A':
-                        try:
-                            turnover = float(turnover_rate)
-                            if turnover > 20:
-                                interpretation = "换手率极高（>20%），资金活跃度极高，可能存在炒作"
-                            elif turnover > 10:
-                                interpretation = "换手率较高（>10%），交易活跃"
-                            elif turnover > 5:
-                                interpretation = "换手率正常（5%-10%），交易适中"
-                            elif turnover > 2:
-                                interpretation = "换手率偏低（2%-5%），交易相对清淡"
-                            else:
-                                interpretation = "换手率很低（<2%），交易清淡"
-                        except:
-                            pass
+                    interpretation = self._interpret_turnover_rate(turnover_rate)
                     
                     print(f"   [Akshare] ✅ 成功获取换手率: {turnover_rate}%")
                     return {
@@ -367,49 +368,26 @@ class MarketSentimentDataFetcher:
         except Exception as e:
             print(f"   [Akshare] ❌ 获取换手率失败: {e}")
             
-            # akshare失败，尝试tushare
-            if data_source_manager.tushare_available:
-                try:
-                    print(f"   [Tushare] 正在获取换手率数据（备用数据源）...")
-                    ts_code = data_source_manager._convert_to_ts_code(symbol)
-                    
-                    # 获取最近一个交易日的数据
-                    df = data_source_manager.tushare_api.daily_basic(
-                        ts_code=ts_code,
-                        trade_date=datetime.now().strftime('%Y%m%d')
-                    )
-                    
-                    if df is not None and not df.empty:
-                        row = df.iloc[0]
-                        turnover_rate = row.get('turnover_rate', 'N/A')
-                        
-                        # 解读换手率
-                        interpretation = ""
-                        if turnover_rate != 'N/A':
-                            try:
-                                turnover = float(turnover_rate)
-                                if turnover > 20:
-                                    interpretation = "换手率极高（>20%），资金活跃度极高，可能存在炒作"
-                                elif turnover > 10:
-                                    interpretation = "换手率较高（>10%），交易活跃"
-                                elif turnover > 5:
-                                    interpretation = "换手率正常（5%-10%），交易适中"
-                                elif turnover > 2:
-                                    interpretation = "换手率偏低（2%-5%），交易相对清淡"
-                                else:
-                                    interpretation = "换手率很低（<2%），交易清淡"
-                            except:
-                                pass
-                        
-                        print(f"   [Tushare] ✅ 成功获取换手率: {turnover_rate}%")
-                        return {
-                            "current_turnover_rate": turnover_rate,
-                            "interpretation": interpretation
-                        }
-                except Exception as te:
-                    print(f"   [Tushare] ❌ 获取失败: {te}")
-        
         return None
+
+    def _interpret_turnover_rate(self, turnover_rate):
+        interpretation = ""
+        if turnover_rate != 'N/A':
+            try:
+                turnover = float(turnover_rate)
+                if turnover > 20:
+                    interpretation = "换手率极高（>20%），资金活跃度极高，可能存在炒作"
+                elif turnover > 10:
+                    interpretation = "换手率较高（>10%），交易活跃"
+                elif turnover > 5:
+                    interpretation = "换手率正常（5%-10%），交易适中"
+                elif turnover > 2:
+                    interpretation = "换手率偏低（2%-5%），交易相对清淡"
+                else:
+                    interpretation = "换手率很低（<2%），交易清淡"
+            except:
+                pass
+        return interpretation
     
     def _get_market_index_sentiment(self):
         """获取大盘指数情绪（支持akshare和tushare自动切换）"""
@@ -762,4 +740,3 @@ if __name__ == "__main__":
         print(formatted_text)
     else:
         print(f"\n获取失败: {sentiment_data.get('error', '未知错误')}")
-

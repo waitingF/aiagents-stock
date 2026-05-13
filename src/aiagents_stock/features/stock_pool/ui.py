@@ -80,15 +80,24 @@ def select_pool(label: str, key: str, include_all: bool = False) -> Optional[Dic
         st.warning("暂无股票池")
         return None
     options = ["全部"] + [pool["id"] for pool in pools] if include_all else [pool["id"] for pool in pools]
+    if st.session_state.get(key) not in options:
+        st.session_state.pop(key, None)
     selected = st.selectbox(
         label,
         options=options,
-        format_func=lambda value: "全部" if value == "全部" else _pool_label(next(pool for pool in pools if pool["id"] == value)),
+        format_func=lambda value: "全部" if value == "全部" else _pool_select_label(next(pool for pool in pools if pool["id"] == value)),
         key=key,
     )
     if selected == "全部":
         return None
-    return next(pool for pool in pools if pool["id"] == selected)
+    pool = next(pool for pool in pools if pool["id"] == selected)
+    st.caption(f"当前股票数: {pool.get('active_count', 0)}")
+    return pool
+
+
+def _pool_select_label(pool: Dict) -> str:
+    system = "系统" if pool.get("is_system") else "普通"
+    return f"{pool['name']} ({system})"
 
 
 def _pool_label(pool: Dict) -> str:

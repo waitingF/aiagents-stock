@@ -43,6 +43,7 @@ class StockPoolManager:
     def __init__(self, repository: StockPoolRepository = stock_pool_db, model: Optional[str] = None):
         self.db = repository
         self.model = model or config.DEFAULT_MODEL_NAME
+        self._hk_spot_name_cache: Optional[Dict[str, str]] = None
 
     # ==================== pools ====================
 
@@ -98,6 +99,24 @@ class StockPoolManager:
             code = code.strip().upper()
             if not code:
                 return False, "股票代码不能为空", None
+            existing_item = self.db.get_item_by_code(pool_id, code)
+            if existing_item and existing_item.get("status") == "active":
+                self._update_existing_stock_from_add(
+                    existing_item["id"],
+                    market=market,
+                    tags=tags,
+                    note=note,
+                    watch_reason=watch_reason,
+                    cost_price=cost_price,
+                    quantity=quantity,
+                    target_price=target_price,
+                    take_profit=take_profit,
+                    stop_loss=stop_loss,
+                    auto_monitor=auto_monitor,
+                    name=name,
+                )
+                return True, f"股票已存在，已更新: {code}", existing_item["id"]
+
             resolved_name = self._resolve_stock_name(code, name)
             item_id = self.db.add_item(
                 pool_id=pool_id,
@@ -117,6 +136,21 @@ class StockPoolManager:
             return True, f"已添加 {code}", item_id
         except Exception as exc:
             return False, f"添加失败: {exc}", None
+
+    def _update_existing_stock_from_add(self, item_id: int, **kwargs: Any) -> None:
+        update_fields = {
+            key: value
+            for key, value in kwargs.items()
+            if key in {"market", "tags", "note", "watch_reason", "cost_price", "quantity", "target_price", "take_profit", "stop_loss", "auto_monitor"}
+            and value not in (None, "")
+        }
+
+        provided_name = (kwargs.get("name") or "").strip()
+        if provided_name:
+            update_fields["name"] = provided_name
+
+        if update_fields:
+            self.db.update_item(item_id, **update_fields)
 
     def batch_import_stocks(self, pool_id: int, stock_input: str, default_tags: str = "") -> Dict[str, Any]:
         codes = parse_stock_list(stock_input)
@@ -154,6 +188,7 @@ class StockPoolManager:
         elif market == "hk":
             resolvers = [
                 self._resolve_hk_name_from_tushare_hk_basic,
+                self._resolve_hk_name_from_akshare_spot,
             ]
 
         for resolver in resolvers:
@@ -261,6 +296,44 @@ class StockPoolManager:
         df = pro.hk_basic(ts_code=ts_code, fields="ts_code,name")
         if df is not None and not df.empty:
             return str(df.iloc[0].get("name") or "").strip() or None
+        return None
+
+    def _resolve_hk_name_from_akshare_spot(self, code: str) -> Optional[str]:
+        raw_code, _ = self._split_code_suffix(code)
+        hk_code = raw_code.zfill(5)
+
+        if self._hk_spot_name_cache is None:
+            self._hk_spot_name_cache = self._load_hk_spot_name_cache()
+
+        return self._hk_spot_name_cache.get(hk_code)
+
+    def _load_hk_spot_name_cache(self) -> Dict[str, str]:
+        import akshare as ak
+
+        df = ak.stock_hk_spot_em()
+        if df is None or df.empty:
+            return {}
+
+        code_col = self._find_column(df, ["代码", "code", "symbol"])
+        name_col = self._find_column(df, ["名称", "name", "证券简称"])
+        if not code_col or not name_col:
+            return {}
+
+        names: Dict[str, str] = {}
+        for _, row in df.iterrows():
+            raw_code = str(row.get(code_col) or "").strip()
+            name = str(row.get(name_col) or "").strip()
+            if not raw_code or not name or name.lower() == "nan":
+                continue
+            names[raw_code.zfill(5)] = name
+        return names
+
+    def _find_column(self, df: Any, candidates: Iterable[str]) -> Optional[str]:
+        lower_columns = {str(column).strip().lower(): column for column in getattr(df, "columns", [])}
+        for candidate in candidates:
+            matched = lower_columns.get(candidate.lower())
+            if matched is not None:
+                return matched
         return None
 
     def update_stock(self, item_id: int, **kwargs: Any) -> Tuple[bool, str]:

@@ -175,6 +175,42 @@ class StockPoolManagerTest(unittest.TestCase):
         self.assertEqual(item["name"], "腾讯控股")
         resolver.assert_called_once_with("00700.HK")
 
+    def test_resolve_hk_name_falls_back_to_akshare_spot_when_tushare_misses(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = StockPoolRepository(Path(tmpdir) / "stock_pools.db", auto_migrate=False)
+            manager = StockPoolManager(repository=repo, model="test-model")
+            watchlist = repo.get_watchlist_pool()
+
+            with (
+                patch.object(manager, "_resolve_hk_name_from_tushare_hk_basic", return_value=None),
+                patch.object(manager, "_resolve_hk_name_from_akshare_spot", return_value="华润万象生活") as resolver,
+            ):
+                success, message, item_id = manager.add_stock(watchlist["id"], "01209")
+
+            item = repo.get_item(item_id)
+
+        self.assertTrue(success, message)
+        self.assertEqual(item["name"], "华润万象生活")
+        resolver.assert_called_once_with("01209")
+
+    def test_add_existing_active_stock_does_not_resolve_name_again(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = StockPoolRepository(Path(tmpdir) / "stock_pools.db", auto_migrate=False)
+            manager = StockPoolManager(repository=repo, model="test-model")
+            watchlist = repo.get_watchlist_pool()
+            item_id = repo.add_item(watchlist["id"], "01209", "01209")
+
+            with patch.object(manager, "_resolve_name_from_static_sources") as resolver:
+                success, message, returned_item_id = manager.add_stock(watchlist["id"], "01209", tags="港股")
+
+            item = repo.get_item(item_id)
+
+        self.assertTrue(success, message)
+        self.assertEqual(returned_item_id, item_id)
+        self.assertEqual(item["name"], "01209")
+        self.assertEqual(item["tags"], "港股")
+        resolver.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

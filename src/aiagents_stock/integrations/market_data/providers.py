@@ -31,7 +31,6 @@ class DataSourceManager:
         elif self.tushare_token:
             try:
                 import tushare as ts
-                ts.set_token(self.tushare_token)
                 self.tushare_api = ts.pro_api(self.tushare_token)
                 self.tushare_available = True
                 print("✅ Tushare数据源初始化成功")
@@ -396,7 +395,13 @@ class DataSourceManager:
         def fetch():
             if adjust in ('qfq', 'hfq'):
                 import tushare as ts
-                return ts.pro_bar(ts_code=ts_code, start_date=start_date, end_date=end_date, adj=adjust)
+                return ts.pro_bar(
+                    ts_code=ts_code,
+                    api=self.tushare_api,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adj=adjust,
+                )
             return self.tushare_api.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
 
         df = self._cache_call(

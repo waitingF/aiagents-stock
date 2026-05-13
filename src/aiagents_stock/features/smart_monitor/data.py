@@ -706,7 +706,7 @@ class SmartMonitorDataFetcher:
                 
                 # 使用pro_bar获取行情（社区版免费）
                 import tushare as ts
-                df = ts.pro_bar(ts_code=ts_code, adj='qfq', ma=[5, 20])
+                df = ts.pro_bar(ts_code=ts_code, api=self.ts_pro, adj='qfq', ma=[5, 20])
                 
                 if df is not None and not df.empty:
                     row = df.iloc[0]

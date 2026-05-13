@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import pandas as pd
+import sys
+import types
 import unittest
 from unittest.mock import patch
 
+sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None))
+
+from src.aiagents_stock.integrations.stock_data_store.loader import ensure_stock_data_store_loaded
 from src.aiagents_stock.integrations.market_data.cache import LocalDataCache
 from src.aiagents_stock.integrations.market_data.providers import DataSourceManager
 from src.aiagents_stock.integrations.stock_data_store.service import StockDataStoreService
@@ -70,6 +75,25 @@ class FakeTushareApi:
         )
 
 
+class FakeTushareModule:
+    def __init__(self, api):
+        self.api = api
+        self.pro_api_calls = []
+        self.pro_bar_calls = []
+        self.set_token_calls = []
+
+    def pro_api(self, token=None):
+        self.pro_api_calls.append(token)
+        return self.api
+
+    def pro_bar(self, **kwargs):
+        self.pro_bar_calls.append(kwargs)
+        return self.api.daily()
+
+    def set_token(self, token):
+        self.set_token_calls.append(token)
+
+
 class TushareCacheAndProviderTest(unittest.TestCase):
     def setUp(self):
         self.tmpdir = self.enterContext(__import__("tempfile").TemporaryDirectory())
@@ -106,6 +130,51 @@ class TushareCacheAndProviderTest(unittest.TestCase):
         stale = cache.get_or_fetch("demo", {"symbol": "000001"}, failing_fetch)
 
         self.assertEqual(stale.iloc[0]["value"], 1)
+
+    def test_data_source_manager_initializes_tushare_without_global_set_token(self):
+        fake_api = FakeTushareApi()
+        fake_tushare = FakeTushareModule(fake_api)
+        cache = LocalDataCache(self.tmpdir, today_provider=lambda: "2026-05-12")
+
+        with patch.dict("os.environ", {"TUSHARE_TOKEN": "test-token"}), patch.dict(
+            sys.modules, {"tushare": fake_tushare}
+        ):
+            manager = DataSourceManager(cache=cache, start_cache_scheduler=False)
+
+        self.assertTrue(manager.tushare_available)
+        self.assertIs(manager.tushare_api, fake_api)
+        self.assertEqual(fake_tushare.pro_api_calls, ["test-token"])
+        self.assertEqual(fake_tushare.set_token_calls, [])
+
+    def test_data_source_manager_passes_api_to_tushare_pro_bar(self):
+        fake_api = FakeTushareApi()
+        fake_tushare = FakeTushareModule(fake_api)
+        cache = LocalDataCache(self.tmpdir, today_provider=lambda: "2026-05-12")
+        manager = DataSourceManager(tushare_api=fake_api, cache=cache, start_cache_scheduler=False)
+
+        with patch.dict(sys.modules, {"tushare": fake_tushare}):
+            df = manager._get_tushare_hist_data("000001", start_date="20260501", end_date="20260512", adjust="qfq")
+
+        self.assertEqual(len(fake_tushare.pro_bar_calls), 1)
+        self.assertIs(fake_tushare.pro_bar_calls[0]["api"], fake_api)
+        self.assertEqual(df.iloc[0]["date"], pd.Timestamp("2026-05-11"))
+
+    def test_stock_data_store_tushare_client_avoids_global_set_token(self):
+        ensure_stock_data_store_loaded()
+        from stock_data_store.clients.tushare import TushareClient
+
+        fake_api = FakeTushareApi()
+        fake_tushare = FakeTushareModule(fake_api)
+
+        with patch.dict(sys.modules, {"tushare": fake_tushare}):
+            client = TushareClient(token="test-token", retry=0)
+            df = client.get_daily_bars("000001.SZ", start_date="20260501", end_date="20260512")
+
+        self.assertEqual(fake_tushare.pro_api_calls, ["test-token"])
+        self.assertEqual(fake_tushare.set_token_calls, [])
+        self.assertEqual(len(fake_tushare.pro_bar_calls), 1)
+        self.assertIs(fake_tushare.pro_bar_calls[0]["api"], fake_api)
+        self.assertEqual(df.iloc[0]["ts_code"], "000001.SZ")
 
     def test_data_source_manager_uses_tushare_and_normalizes_daily(self):
         fake_api = FakeTushareApi()

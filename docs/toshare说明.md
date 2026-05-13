@@ -7,15 +7,7 @@ Python SDK
 import tushare as ts
 这里注意， tushare版本需大于1.2.10
 
-设置token
-
-ts.set_token('your token here')
-以上方法只需要在第一次或者token失效后调用，完成调取tushare数据凭证的设置，正常情况下不需要重复设置。也可以忽略此步骤，直接用pro_api('your token')完成初始化
-
-初始化pro接口
-
-pro = ts.pro_api()
-如果上一步骤ts.set_token('your token')无效或不想保存token到本地，也可以在初始化接口里直接设置token:
+初始化pro接口（显式传入token，避免写入本地全局token配置）
 
 pro = ts.pro_api('your token')
 数据调取
@@ -67,7 +59,7 @@ south_money	float	南向资金（百万元）
 接口用法
 
 
-pro = ts.pro_api()
+pro = ts.pro_api('your token')
 
 pro.moneyflow_hsgt(start_date='20180125', end_date='20180808')
 或者

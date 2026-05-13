@@ -355,7 +355,7 @@ STOCK_DATA_CACHE_ENABLED=true
 
 借鉴 `stock-data-store`：
 
-1. 新增 `TushareClient`：封装 token、`ts.set_token`、`ts.pro_api`、重试、限速、API 调用统计。
+1. 新增 `TushareClient`：封装 token、`ts.pro_api(token)`、重试、限速、API 调用统计；避免写入本地全局 token 配置。
 2. 新增 `MarketDataCache`：支持日线、`stock_basic`、`daily_basic`、财务数据 CSV 存储。
 3. 新增 `market_data/mappers.py`：统一 Tushare/AKShare 字段到项目内部字段。
 4. 将当前 `DataSourceManager` 改为门面类，内部组合 Tushare client、AKShare fallback 和 cache。

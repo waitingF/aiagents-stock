@@ -226,8 +226,7 @@ https://tushare.pro/user/token
 **方法二：API查询**
 ```python
 import tushare as ts
-ts.set_token('your_token')
-pro = ts.pro_api()
+pro = ts.pro_api('your_token')
 
 # 查询积分（需要token）
 print("当前积分:", pro.query('user', fields='id,nick,credits'))
@@ -347,4 +346,3 @@ TUSHARE_TOKEN="your_token_here"  # 0积分也可以
 
 **更新时间**: 2025-10-25  
 **版本**: v1.0
-

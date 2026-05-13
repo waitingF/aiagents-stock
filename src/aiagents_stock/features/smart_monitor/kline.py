@@ -436,6 +436,7 @@ class SmartMonitorKline:
             import tushare as ts
             df = ts.pro_bar(
                 ts_code=ts_code,
+                api=ts_pro,
                 start_date=start_date,
                 end_date=end_date,
                 adj='qfq'

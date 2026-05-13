@@ -1,7 +1,9 @@
-from src.aiagents_stock.integrations.llm.client import DeepSeekClient
-from typing import Dict, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+from typing import Any, Callable, Dict, List, Tuple
+
 import src.aiagents_stock.core.config as config
+from src.aiagents_stock.integrations.llm.client import DeepSeekClient
 
 class StockAnalysisAgents:
     """股票分析AI智能体集合"""
@@ -405,17 +407,19 @@ class StockAnalysisAgents:
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
     
-    def run_multi_agent_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict, 
-                                 financial_data: Dict = None, fund_flow_data: Dict = None, 
+    def run_multi_agent_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict,
+                                 financial_data: Dict = None, fund_flow_data: Dict = None,
                                  sentiment_data: Dict = None, news_data: Dict = None,
                                  quarterly_data: Dict = None, risk_data: Dict = None,
-                                 enabled_analysts: Dict = None) -> Dict[str, Any]:
+                                 enabled_analysts: Dict = None,
+                                 analyst_max_workers: int = 6) -> Dict[str, Any]:
         """运行多智能体分析
         
         Args:
             enabled_analysts: 字典，指定哪些分析师参与分析
                 例如: {'technical': True, 'fundamental': True, ...}
                 如果为None，则运行所有分析师
+            analyst_max_workers: 分析师并发线程数上限
         """
         # 如果未指定，默认所有分析师都参与
         if enabled_analysts is None:
@@ -436,32 +440,44 @@ class StockAnalysisAgents:
         print(f"📋 参与分析的分析师: {', '.join(active_analysts)}")
         print("=" * 50)
         
-        # 并行运行各个分析师
-        agents_results = {}
-        
-        # 技术面分析
+        task_specs: List[Tuple[str, Callable[..., Dict[str, Any]], Tuple[Any, ...]]] = []
+
         if enabled_analysts.get('technical', True):
-            agents_results["technical"] = self.technical_analyst_agent(stock_info, stock_data, indicators)
-        
-        # 基本面分析
+            task_specs.append(("technical", self.technical_analyst_agent, (stock_info, stock_data, indicators)))
+
         if enabled_analysts.get('fundamental', True):
-            agents_results["fundamental"] = self.fundamental_analyst_agent(stock_info, financial_data, quarterly_data)
-        
-        # 资金面分析（传入资金流向数据）
+            task_specs.append(("fundamental", self.fundamental_analyst_agent, (stock_info, financial_data, quarterly_data)))
+
         if enabled_analysts.get('fund_flow', True):
-            agents_results["fund_flow"] = self.fund_flow_analyst_agent(stock_info, indicators, fund_flow_data)
-        
-        # 风险管理分析（传入风险数据）
+            task_specs.append(("fund_flow", self.fund_flow_analyst_agent, (stock_info, indicators, fund_flow_data)))
+
         if enabled_analysts.get('risk', True):
-            agents_results["risk_management"] = self.risk_management_agent(stock_info, indicators, risk_data)
-        
-        # 市场情绪分析（传入市场情绪数据）
+            task_specs.append(("risk_management", self.risk_management_agent, (stock_info, indicators, risk_data)))
+
         if enabled_analysts.get('sentiment', False):
-            agents_results["market_sentiment"] = self.market_sentiment_agent(stock_info, sentiment_data)
-        
-        # 新闻分析（传入新闻数据）
+            task_specs.append(("market_sentiment", self.market_sentiment_agent, (stock_info, sentiment_data)))
+
         if enabled_analysts.get('news', False):
-            agents_results["news"] = self.news_analyst_agent(stock_info, news_data)
+            task_specs.append(("news", self.news_analyst_agent, (stock_info, news_data)))
+
+        completed_results: Dict[str, Dict[str, Any]] = {}
+        max_workers = max(1, min(len(task_specs), analyst_max_workers))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_key = {
+                executor.submit(agent_func, *agent_args): agent_key
+                for agent_key, agent_func, agent_args in task_specs
+            }
+
+            for future in as_completed(future_to_key):
+                agent_key = future_to_key[future]
+                completed_results[agent_key] = future.result()
+
+        # Keep the public result order stable for Streamlit tabs and saved reports.
+        agents_results = {
+            agent_key: completed_results[agent_key]
+            for agent_key, _, _ in task_specs
+        }
         
         print("✅ 所有已选择的分析师完成分析")
         print("=" * 50)

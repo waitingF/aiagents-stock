@@ -16,3 +16,16 @@ Use `@/openspec/AGENTS.md` to learn:
 Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
+
+## Verification Requirements
+
+After completing any code or behavior changes, agents must run appropriate tests
+before handing work back to the user. The verification must demonstrate that:
+
+- The implemented feature or fix behaves as expected.
+- Existing functionality that was not intentionally changed still works.
+- Any tests that could not be run are clearly reported with the reason.
+
+Prefer targeted tests for the changed area plus the relevant existing regression
+suite. For broad or shared changes, also run a wider suite or syntax/import check
+when available.

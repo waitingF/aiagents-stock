@@ -4,6 +4,7 @@ import tempfile
 import types
 import unittest
 import sys
+import csv
 from pathlib import Path
 from unittest.mock import patch
 
@@ -138,6 +139,41 @@ class StockPoolManagerTest(unittest.TestCase):
 
         self.assertTrue(success, message)
         self.assertEqual(item["name"], "手动名称")
+
+    def test_resolve_a_share_name_uses_local_static_basic_without_stock_info_fetch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stock_basic_path = Path(tmpdir) / "stock_basic.csv"
+            with stock_basic_path.open("w", encoding="utf-8", newline="") as file:
+                writer = csv.DictWriter(file, fieldnames=["ts_code", "symbol", "name"])
+                writer.writeheader()
+                writer.writerow({"ts_code": "600519.SH", "symbol": "600519", "name": "贵州茅台"})
+
+            repo = StockPoolRepository(Path(tmpdir) / "stock_pools.db", auto_migrate=False)
+            manager = StockPoolManager(repository=repo, model="test-model")
+            holding = repo.get_holding_pool()
+
+            with patch("src.aiagents_stock.features.stock_pool.manager.data_path", return_value=stock_basic_path):
+                success, message, item_id = manager.add_stock(holding["id"], "600519.SH")
+
+            item = repo.get_item(item_id)
+
+        self.assertTrue(success, message)
+        self.assertEqual(item["name"], "贵州茅台")
+
+    def test_resolve_hk_name_does_not_use_realtime_or_history_stock_info_fetcher(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = StockPoolRepository(Path(tmpdir) / "stock_pools.db", auto_migrate=False)
+            manager = StockPoolManager(repository=repo, model="test-model")
+            watchlist = repo.get_watchlist_pool()
+
+            with patch.object(manager, "_resolve_hk_name_from_tushare_hk_basic", return_value="腾讯控股") as resolver:
+                success, message, item_id = manager.add_stock(watchlist["id"], "00700.HK")
+
+            item = repo.get_item(item_id)
+
+        self.assertTrue(success, message)
+        self.assertEqual(item["name"], "腾讯控股")
+        resolver.assert_called_once_with("00700.HK")
 
 
 if __name__ == "__main__":

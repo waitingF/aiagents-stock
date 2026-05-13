@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import csv
 import json
-import re
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import src.aiagents_stock.core.config as config
+from src.aiagents_stock.core.paths import data_path
 from src.aiagents_stock.features.stock_analysis.service import (
     analyze_single_stock_for_batch,
     parse_stock_list,
@@ -128,36 +131,137 @@ class StockPoolManager:
         return {"total": len(codes), "added": added, "failed": failed}
 
     def _resolve_stock_name(self, code: str, name: Optional[str]) -> str:
-        """Resolve stock name from market data when user did not provide one."""
+        """Resolve stock name without fetching quotes or historical bars."""
         provided_name = (name or "").strip()
         if provided_name and provided_name.upper() != code.upper() and provided_name != "未知":
             return provided_name
 
-        lookup_code = self._to_stock_info_lookup_code(code)
-        try:
-            from src.aiagents_stock.features.stock_analysis.data import StockDataFetcher
-
-            stock_info = StockDataFetcher().get_stock_info(lookup_code)
-        except Exception:
-            stock_info = {}
-
-        if isinstance(stock_info, dict) and "error" not in stock_info:
-            resolved = str(stock_info.get("name") or "").strip()
-            if resolved and resolved != "未知":
-                return resolved
+        resolved = self._resolve_name_from_static_sources(code)
+        if resolved:
+            return resolved
 
         return provided_name or code
 
-    def _to_stock_info_lookup_code(self, code: str) -> str:
-        """Convert stored code to the format StockDataFetcher expects for lookup."""
+    def _resolve_name_from_static_sources(self, code: str) -> Optional[str]:
+        market = self._detect_market(code)
+        resolvers = []
+        if market == "a_share":
+            resolvers = [
+                self._resolve_name_from_local_stock_basic,
+                self._resolve_a_share_name_from_tushare_stock_basic,
+                self._resolve_a_share_name_from_akshare_code_name,
+            ]
+        elif market == "hk":
+            resolvers = [
+                self._resolve_hk_name_from_tushare_hk_basic,
+            ]
+
+        for resolver in resolvers:
+            try:
+                resolved = resolver(code)
+            except Exception:
+                resolved = None
+            if resolved:
+                return resolved
+        return None
+
+    def _detect_market(self, code: str) -> str:
+        normalized = code.strip().upper()
+        raw_code, suffix = self._split_code_suffix(normalized)
+        if suffix in {"SH", "SZ", "BJ"}:
+            return "a_share"
+        if suffix == "HK" or normalized.startswith("HK"):
+            return "hk"
+        if raw_code.isdigit() and len(raw_code) == 6:
+            return "a_share"
+        if raw_code.isdigit() and 1 <= len(raw_code) <= 5:
+            return "hk"
+        return "unknown"
+
+    def _split_code_suffix(self, code: str) -> Tuple[str, str]:
         normalized = code.strip().upper()
         if "." not in normalized:
-            return normalized
+            return normalized[2:] if normalized.startswith("HK") else normalized, "HK" if normalized.startswith("HK") else ""
 
         raw_code, suffix = normalized.rsplit(".", 1)
-        if suffix in {"SH", "SZ", "BJ", "HK"}:
-            return raw_code
-        return normalized
+        return raw_code, suffix
+
+    def _to_a_share_ts_code(self, code: str) -> str:
+        raw_code, suffix = self._split_code_suffix(code)
+        if suffix in {"SH", "SZ", "BJ"}:
+            return f"{raw_code}.{suffix}"
+        if raw_code.startswith("6"):
+            return f"{raw_code}.SH"
+        if raw_code.startswith(("0", "3")):
+            return f"{raw_code}.SZ"
+        if raw_code.startswith(("4", "8")):
+            return f"{raw_code}.BJ"
+        return raw_code
+
+    def _resolve_name_from_local_stock_basic(self, code: str) -> Optional[str]:
+        stock_basic_path = Path(data_path("stock_data/meta/stock_basic.csv"))
+        if not stock_basic_path.exists():
+            return None
+
+        raw_code, _ = self._split_code_suffix(code)
+        ts_code = self._to_a_share_ts_code(code)
+        with stock_basic_path.open("r", encoding="utf-8-sig", newline="") as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if row.get("ts_code") == ts_code or row.get("symbol") == raw_code:
+                    name = (row.get("name") or "").strip()
+                    return name or None
+        return None
+
+    def _resolve_a_share_name_from_tushare_stock_basic(self, code: str) -> Optional[str]:
+        token = os.getenv("TUSHARE_TOKEN", "")
+        if not token:
+            return None
+
+        import tushare as ts
+
+        ts_code = self._to_a_share_ts_code(code)
+        pro = ts.pro_api(token)
+        df = pro.stock_basic(ts_code=ts_code, fields="ts_code,name")
+        if df is not None and not df.empty:
+            return str(df.iloc[0].get("name") or "").strip() or None
+        return None
+
+    def _resolve_a_share_name_from_akshare_code_name(self, code: str) -> Optional[str]:
+        import akshare as ak
+
+        raw_code, _ = self._split_code_suffix(code)
+        df = ak.stock_info_a_code_name()
+        if df is None or df.empty:
+            return None
+
+        code_col = "code" if "code" in df.columns else "证券代码" if "证券代码" in df.columns else None
+        name_col = "name" if "name" in df.columns else "证券简称" if "证券简称" in df.columns else None
+        if not code_col or not name_col:
+            return None
+
+        matched = df[df[code_col].astype(str).str.zfill(6) == raw_code]
+        if matched.empty:
+            return None
+        return str(matched.iloc[0].get(name_col) or "").strip() or None
+
+    def _resolve_hk_name_from_tushare_hk_basic(self, code: str) -> Optional[str]:
+        token = os.getenv("TUSHARE_TOKEN", "")
+        if not token:
+            return None
+
+        import tushare as ts
+
+        raw_code, _ = self._split_code_suffix(code)
+        hk_code = raw_code.zfill(5)
+        ts_code = f"{hk_code}.HK"
+        pro = ts.pro_api(token)
+        if not hasattr(pro, "hk_basic"):
+            return None
+        df = pro.hk_basic(ts_code=ts_code, fields="ts_code,name")
+        if df is not None and not df.empty:
+            return str(df.iloc[0].get("name") or "").strip() or None
+        return None
 
     def update_stock(self, item_id: int, **kwargs: Any) -> Tuple[bool, str]:
         try:

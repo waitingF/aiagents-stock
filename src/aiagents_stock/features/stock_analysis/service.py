@@ -6,7 +6,8 @@ reused by batch jobs, CLI commands, tests, and future API entrypoints.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.aiagents_stock.core import config
 from src.aiagents_stock.features.stock_analysis.agents import StockAnalysisAgents
@@ -69,11 +70,107 @@ def parse_stock_list(stock_input: str) -> List[str]:
     return unique_list
 
 
+def _fetch_supplemental_analysis_data(
+    symbol: str,
+    stock_data: Any,
+    enabled_analysts_config: Dict[str, bool],
+    data_fetch_max_workers: int = 6,
+) -> Tuple[Any, Any, Any, Any, Any, Any]:
+    """Fetch non-K-line analysis data sources concurrently."""
+    fetcher = StockDataFetcher()
+    is_chinese_stock = fetcher._is_chinese_stock(symbol)
+
+    def financial_failure(exc: Exception) -> Dict[str, str]:
+        return {"error": f"获取财务数据失败: {str(exc)}"}
+
+    def optional_failure(_: Exception) -> None:
+        return None
+
+    def fetch_financial_data() -> Any:
+        return StockDataFetcher().get_financial_data(symbol)
+
+    def fetch_quarterly_data() -> Any:
+        from src.aiagents_stock.features.stock_analysis.quarterly_report_data import QuarterlyReportDataFetcher
+
+        return QuarterlyReportDataFetcher().get_quarterly_reports(symbol)
+
+    def fetch_fund_flow_data() -> Any:
+        from src.aiagents_stock.features.stock_analysis.fund_flow import FundFlowAkshareDataFetcher
+
+        return FundFlowAkshareDataFetcher().get_fund_flow_data(symbol)
+
+    def fetch_sentiment_data() -> Any:
+        from src.aiagents_stock.features.stock_analysis.market_sentiment_data import MarketSentimentDataFetcher
+
+        return MarketSentimentDataFetcher().get_market_sentiment_data(symbol, stock_data)
+
+    def fetch_news_data() -> Any:
+        from src.aiagents_stock.features.stock_analysis.qstock_news_data import QStockNewsDataFetcher
+
+        return QStockNewsDataFetcher().get_stock_news(symbol)
+
+    def fetch_risk_data() -> Any:
+        return StockDataFetcher().get_risk_data(symbol)
+
+    task_specs: List[Tuple[str, Callable[[], Any], Callable[[Exception], Any]]] = [
+        ("financial_data", fetch_financial_data, financial_failure),
+    ]
+
+    if enabled_analysts_config.get("fundamental", True) and is_chinese_stock:
+        task_specs.append(("quarterly_data", fetch_quarterly_data, optional_failure))
+
+    if enabled_analysts_config.get("fund_flow", True) and is_chinese_stock:
+        task_specs.append(("fund_flow_data", fetch_fund_flow_data, optional_failure))
+
+    if enabled_analysts_config.get("sentiment", False) and is_chinese_stock:
+        task_specs.append(("sentiment_data", fetch_sentiment_data, optional_failure))
+
+    if enabled_analysts_config.get("news", False) and is_chinese_stock:
+        task_specs.append(("news_data", fetch_news_data, optional_failure))
+
+    if enabled_analysts_config.get("risk", True) and is_chinese_stock:
+        task_specs.append(("risk_data", fetch_risk_data, optional_failure))
+
+    results = {
+        "financial_data": None,
+        "quarterly_data": None,
+        "fund_flow_data": None,
+        "sentiment_data": None,
+        "news_data": None,
+        "risk_data": None,
+    }
+    failure_handlers = {task_key: failure_handler for task_key, _, failure_handler in task_specs}
+    max_workers = max(1, min(len(task_specs), data_fetch_max_workers))
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_key = {
+            executor.submit(fetch_func): task_key
+            for task_key, fetch_func, _ in task_specs
+        }
+
+        for future in as_completed(future_to_key):
+            task_key = future_to_key[future]
+            try:
+                results[task_key] = future.result()
+            except Exception as exc:
+                results[task_key] = failure_handlers[task_key](exc)
+
+    return (
+        results["financial_data"],
+        results["quarterly_data"],
+        results["fund_flow_data"],
+        results["sentiment_data"],
+        results["news_data"],
+        results["risk_data"],
+    )
+
+
 def analyze_single_stock_for_batch(
     symbol: str,
     period: str,
     enabled_analysts_config: Optional[Dict[str, bool]] = None,
     selected_model: Optional[str] = None,
+    data_fetch_max_workers: int = 6,
 ) -> Dict[str, Any]:
     """Analyze a single stock for batch workflows and return structured results."""
     try:
@@ -91,61 +188,19 @@ def analyze_single_stock_for_batch(
         if stock_data is None:
             return {"symbol": symbol, "error": "无法获取股票历史数据", "success": False}
 
-        fetcher = StockDataFetcher()
-        financial_data = fetcher.get_financial_data(symbol)
-
-        quarterly_data = None
-        enable_fundamental = enabled_analysts_config.get("fundamental", True)
-        if enable_fundamental and fetcher._is_chinese_stock(symbol):
-            try:
-                from src.aiagents_stock.features.stock_analysis.quarterly_report_data import QuarterlyReportDataFetcher
-
-                quarterly_fetcher = QuarterlyReportDataFetcher()
-                quarterly_data = quarterly_fetcher.get_quarterly_reports(symbol)
-            except Exception:
-                pass
-
-        enable_fund_flow = enabled_analysts_config.get("fund_flow", True)
-        enable_sentiment = enabled_analysts_config.get("sentiment", False)
-        enable_news = enabled_analysts_config.get("news", False)
-
-        fund_flow_data = None
-        if enable_fund_flow and fetcher._is_chinese_stock(symbol):
-            try:
-                from src.aiagents_stock.features.stock_analysis.fund_flow import FundFlowAkshareDataFetcher
-
-                fund_flow_fetcher = FundFlowAkshareDataFetcher()
-                fund_flow_data = fund_flow_fetcher.get_fund_flow_data(symbol)
-            except Exception:
-                pass
-
-        sentiment_data = None
-        if enable_sentiment and fetcher._is_chinese_stock(symbol):
-            try:
-                from src.aiagents_stock.features.stock_analysis.market_sentiment_data import MarketSentimentDataFetcher
-
-                sentiment_fetcher = MarketSentimentDataFetcher()
-                sentiment_data = sentiment_fetcher.get_market_sentiment_data(symbol, stock_data)
-            except Exception:
-                pass
-
-        news_data = None
-        if enable_news and fetcher._is_chinese_stock(symbol):
-            try:
-                from src.aiagents_stock.features.stock_analysis.qstock_news_data import QStockNewsDataFetcher
-
-                news_fetcher = QStockNewsDataFetcher()
-                news_data = news_fetcher.get_stock_news(symbol)
-            except Exception:
-                pass
-
-        risk_data = None
-        enable_risk = enabled_analysts_config.get("risk", True)
-        if enable_risk and fetcher._is_chinese_stock(symbol):
-            try:
-                risk_data = fetcher.get_risk_data(symbol)
-            except Exception:
-                pass
+        (
+            financial_data,
+            quarterly_data,
+            fund_flow_data,
+            sentiment_data,
+            news_data,
+            risk_data,
+        ) = _fetch_supplemental_analysis_data(
+            symbol,
+            stock_data,
+            enabled_analysts_config,
+            data_fetch_max_workers=data_fetch_max_workers,
+        )
 
         agents = StockAnalysisAgents(model=selected_model)
         agents_results = agents.run_multi_agent_analysis(

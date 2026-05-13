@@ -13,6 +13,7 @@ PAGE_KEYS = [
     "show_sector_strategy",
     "show_longhubang",
     "show_portfolio",
+    "show_stock_pool",
     "show_low_price_bull",
     "show_news_flow",
     "show_macro_cycle",

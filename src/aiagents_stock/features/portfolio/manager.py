@@ -1,649 +1,137 @@
+"""Compatibility manager for legacy portfolio imports.
+
+The portfolio feature now uses the system ``持仓`` stock pool as its storage and
+analysis backend. This module preserves the old public object name for callers
+that still import ``portfolio_manager``.
 """
-持仓管理器模块
 
-提供持仓股票管理和批量分析功能
-"""
+from __future__ import annotations
 
-import json
-import time
-from typing import List, Dict, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 
-# 导入必要的模块
-from src.aiagents_stock.features.portfolio.repository import portfolio_db
-from src.aiagents_stock.features.portfolio import review as portfolio_review
-from src.aiagents_stock.features.stock_analysis.service import analyze_single_stock_for_batch
-import src.aiagents_stock.core.config as config
-
-
-def _extract_first_price_range(price_text) -> tuple:
-    """Extract the first two numeric prices from a model-generated range."""
-    import re
-
-    if not price_text:
-        return None, None
-
-    numbers = re.findall(r'\d+(?:\.\d+)?', str(price_text))
-    if len(numbers) < 2:
-        return None, None
-
-    try:
-        return float(numbers[0]), float(numbers[1])
-    except (ValueError, TypeError):
-        return None, None
-
-
-def _extract_first_price(price_text):
-    """Extract the first numeric price from model output."""
-    import re
-
-    if not price_text:
-        return None
-
-    numbers = re.findall(r'\d+(?:\.\d+)?', str(price_text))
-    if not numbers:
-        return None
-
-    try:
-        return float(numbers[0])
-    except (ValueError, TypeError):
-        return None
-
-
-def _safe_float(value):
-    """Convert a value to float when possible."""
-    if value is None or value == "":
-        return None
-
-    try:
-        return float(value)
-    except (ValueError, TypeError):
-        return _extract_first_price(value)
+from src.aiagents_stock.features.stock_pool.manager import StockPoolManager, stock_pool_manager
 
 
 class PortfolioManager:
-    """持仓管理器类"""
-    
-    def __init__(self, model=None):
-        """
-        初始化持仓管理器
-        
-        Args:
-            model: AI模型名称，默认从 .env 的 DEFAULT_MODEL_NAME 读取
-        """
-        self.model = model or config.DEFAULT_MODEL_NAME
-        self.db = portfolio_db
-    
-    # ==================== 持仓股票管理 ====================
-    
-    def add_stock(self, code: str, name: str, cost_price: Optional[float] = None,
-                  quantity: Optional[int] = None, note: str = "", 
-                  auto_monitor: bool = True) -> Tuple[bool, str, Optional[int]]:
-        """
-        添加持仓股票
-        
-        Args:
-            code: 股票代码
-            name: 股票名称
-            cost_price: 持仓成本价
-            quantity: 持仓数量
-            note: 备注
-            auto_monitor: 是否自动同步到监测
-            
-        Returns:
-            (成功标志, 消息, 股票ID)
-        """
-        try:
-            # 验证股票代码格式
-            code = code.strip().upper()
-            if not code:
-                return False, "股票代码不能为空", None
-            
-            # 检查股票代码是否已存在
-            existing = self.db.get_stock_by_code(code)
-            if existing:
-                return False, f"股票代码 {code} 已存在", None
-            
-            # 添加到数据库
-            stock_id = self.db.add_stock(code, name, cost_price, quantity, note, auto_monitor)
-            return True, f"添加持仓股票成功: {code} {name}", stock_id
-            
-        except Exception as e:
-            return False, f"添加失败: {str(e)}", None
-    
-    def update_stock(self, stock_id: int, **kwargs) -> Tuple[bool, str]:
-        """
-        更新持仓股票信息
-        
-        Args:
-            stock_id: 股票ID
-            **kwargs: 要更新的字段
-            
-        Returns:
-            (成功标志, 消息)
-        """
-        try:
-            success = self.db.update_stock(stock_id, **kwargs)
-            if success:
-                return True, "更新成功"
-            else:
-                return False, f"未找到股票ID: {stock_id}"
-        except Exception as e:
-            return False, f"更新失败: {str(e)}"
-    
-    def delete_stock(self, stock_id: int) -> Tuple[bool, str]:
-        """
-        删除持仓股票（级联删除分析历史）
-        
-        Args:
-            stock_id: 股票ID
-            
-        Returns:
-            (成功标志, 消息)
-        """
-        try:
-            success = self.db.delete_stock(stock_id)
-            if success:
-                return True, "删除成功"
-            else:
-                return False, f"未找到股票ID: {stock_id}"
-        except Exception as e:
-            return False, f"删除失败: {str(e)}"
-    
-    def get_stock(self, stock_id: int) -> Optional[Dict]:
-        """获取单只持仓股票信息"""
-        return self.db.get_stock(stock_id)
-    
-    def get_all_stocks(self, auto_monitor_only: bool = False) -> List[Dict]:
-        """获取所有持仓股票列表"""
-        return self.db.get_all_stocks(auto_monitor_only)
-    
-    def search_stocks(self, keyword: str) -> List[Dict]:
-        """搜索持仓股票"""
-        return self.db.search_stocks(keyword)
-    
-    def get_stock_count(self) -> int:
-        """获取持仓股票总数"""
-        return self.db.get_stock_count()
-    
-    # ==================== 单只股票分析 ====================
-    
-    def analyze_single_stock(self, stock_code: str, period="1y", 
-                            selected_agents: List[str] = None) -> Dict:
-        """
-        分析单只股票（复用app.py中的分析逻辑）
-        
-        Args:
-            stock_code: 股票代码
-            period: 数据周期
-            selected_agents: 选中的分析师列表
-            
-        Returns:
-            分析结果字典
-        """
-        print(f"\n{'='*60}")
-        print(f"开始分析股票: {stock_code}")
-        print(f"{'='*60}\n")
-        
-        try:
-            # 构建分析师配置
-            if selected_agents is None:
-                enabled_analysts_config = {
-                    'technical': True,
-                    'fundamental': True,
-                    'fund_flow': True,
-                    'risk': True,
-                    'sentiment': False,
-                    'news': False
-                }
-            else:
-                enabled_analysts_config = {
-                    'technical': 'technical' in selected_agents,
-                    'fundamental': 'fundamental' in selected_agents,
-                    'fund_flow': 'fund_flow' in selected_agents,
-                    'risk': 'risk' in selected_agents,
-                    'sentiment': 'sentiment' in selected_agents,
-                    'news': 'news' in selected_agents
-                }
-            
-            # 调用首页的分析函数
-            result = analyze_single_stock_for_batch(
-                symbol=stock_code,
-                period=period,
-                enabled_analysts_config=enabled_analysts_config,
-                selected_model=self.model
-            )
-            
-            # 检查结果
-            if not result.get("success", False):
-                error_msg = result.get("error", "未知错误")
-                print(f"\n[ERROR] 分析失败: {error_msg}")
-                return {"success": False, "error": error_msg}
-            
-            print(f"\n{'='*60}")
-            print(f"分析完成！")
-            print(f"{'='*60}\n")
-            
-            return result
-            
-        except Exception as e:
-            print(f"\n[ERROR] 分析失败: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return {"success": False, "error": str(e)}
-    
-    # ==================== 批量分析 ====================
-    
-    def batch_analyze_sequential(self, stock_codes: List[str], period="1y",
-                                 selected_agents: List[str] = None,
-                                 progress_callback=None) -> Dict:
-        """
-        顺序批量分析（逐只分析）
-        
-        Args:
-            stock_codes: 股票代码列表
-            period: 数据周期
-            selected_agents: 选中的分析师列表
-            progress_callback: 进度回调函数 callback(current, total, code, status)
-            
-        Returns:
-            批量分析结果字典
-        """
-        print(f"\n{'='*60}")
-        print(f"开始批量分析 (顺序模式): {len(stock_codes)}只股票")
-        print(f"{'='*60}\n")
-        
-        start_time = time.time()
-        results = []
-        failed = []
-        
-        for i, code in enumerate(stock_codes, 1):
-            print(f"\n--- 分析进度: {i}/{len(stock_codes)} ---")
-            
-            if progress_callback:
-                progress_callback(i, len(stock_codes), code, "analyzing")
-            
-            try:
-                result = self.analyze_single_stock(code, period, selected_agents)
-                
-                if result.get("success"):
-                    results.append({
-                        "code": code,
-                        "result": result
-                    })
-                    if progress_callback:
-                        progress_callback(i, len(stock_codes), code, "success")
-                else:
-                    failed.append({
-                        "code": code,
-                        "error": result.get("error", "未知错误")
-                    })
-                    if progress_callback:
-                        progress_callback(i, len(stock_codes), code, "failed")
-                    
-            except Exception as e:
-                print(f"[ERROR] 股票 {code} 分析失败: {str(e)}")
-                failed.append({
-                    "code": code,
-                    "error": str(e)
-                })
-                if progress_callback:
-                    progress_callback(i, len(stock_codes), code, "error")
-        
-        elapsed_time = time.time() - start_time
-        
-        print(f"\n{'='*60}")
-        print(f"批量分析完成！")
-        print(f"成功: {len(results)}只, 失败: {len(failed)}只, 耗时: {elapsed_time:.1f}秒")
-        print(f"{'='*60}\n")
-        
-        return {
-            "success": True,
-            "mode": "sequential",
-            "total": len(stock_codes),
-            "succeeded": len(results),
-            "failed": len(failed),
-            "results": results,
-            "failed_stocks": failed,
-            "elapsed_time": elapsed_time
-        }
-    
-    def batch_analyze_parallel(self, stock_codes: List[str], period="1y",
-                               selected_agents: List[str] = None,
-                               max_workers: int = 3,
-                               progress_callback=None) -> Dict:
-        """
-        并行批量分析（多线程）
-        
-        Args:
-            stock_codes: 股票代码列表
-            period: 数据周期
-            selected_agents: 选中的分析师列表
-            max_workers: 最大并发数（默认3）
-            progress_callback: 进度回调函数
-            
-        Returns:
-            批量分析结果字典
-        """
-        print(f"\n{'='*60}")
-        print(f"开始批量分析 (并行模式): {len(stock_codes)}只股票, 并发数: {max_workers}")
-        print(f"{'='*60}\n")
-        
-        start_time = time.time()
-        results = []
-        failed = []
-        completed = 0
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任务
-            future_to_code = {
-                executor.submit(self.analyze_single_stock, code, period, selected_agents): code
-                for code in stock_codes
-            }
-            
-            # 处理完成的任务
-            for future in as_completed(future_to_code):
-                code = future_to_code[future]
-                completed += 1
-                
-                try:
-                    result = future.result()
-                    
-                    if result.get("success"):
-                        results.append({
-                            "code": code,
-                            "result": result
-                        })
-                        print(f"\n[{completed}/{len(stock_codes)}] {code} 分析完成")
-                        if progress_callback:
-                            progress_callback(completed, len(stock_codes), code, "success")
-                    else:
-                        failed.append({
-                            "code": code,
-                            "error": result.get("error", "未知错误")
-                        })
-                        print(f"\n[{completed}/{len(stock_codes)}] {code} 分析失败: {result.get('error')}")
-                        if progress_callback:
-                            progress_callback(completed, len(stock_codes), code, "failed")
-                        
-                except Exception as e:
-                    failed.append({
-                        "code": code,
-                        "error": str(e)
-                    })
-                    print(f"\n[{completed}/{len(stock_codes)}] {code} 分析异常: {str(e)}")
-                    if progress_callback:
-                        progress_callback(completed, len(stock_codes), code, "error")
-        
-        elapsed_time = time.time() - start_time
-        
-        print(f"\n{'='*60}")
-        print(f"批量分析完成！")
-        print(f"成功: {len(results)}只, 失败: {len(failed)}只, 耗时: {elapsed_time:.1f}秒")
-        print(f"{'='*60}\n")
-        
-        return {
-            "success": True,
-            "mode": "parallel",
-            "total": len(stock_codes),
-            "succeeded": len(results),
-            "failed": len(failed),
-            "results": results,
-            "failed_stocks": failed,
-            "elapsed_time": elapsed_time
-        }
-    
-    def batch_analyze_portfolio(self, mode="sequential", period="1y",
-                                selected_agents: List[str] = None,
-                                max_workers: int = 3,
-                                progress_callback=None,
-                                stock_codes: List[str] = None) -> Dict:
-        """
-        批量分析所有持仓股票
-        
-        Args:
-            mode: 分析模式 ("sequential" 或 "parallel")
-            period: 数据周期
-            selected_agents: 选中的分析师列表
-            max_workers: 并行模式下的最大并发数（默认3）
-            progress_callback: 进度回调函数
-            
-        Returns:
-            批量分析结果字典
-        """
-        # 获取所有持仓股票
-        stocks = self.get_all_stocks()
-        
-        if not stocks:
-            return {
-                "success": False,
-                "error": "没有持仓股票"
-            }
-        
-        available_codes = [stock['code'] for stock in stocks]
-        if stock_codes is None:
-            stock_codes = available_codes
-        else:
-            selected_set = {code.strip().upper() for code in stock_codes if code and code.strip()}
-            stock_codes = [code for code in available_codes if code in selected_set]
+    """Compatibility wrapper backed by the holding stock pool."""
 
-        if not stock_codes:
-            return {
-                "success": False,
-                "error": "没有选择可分析的持仓股票"
-            }
-        
-        # 根据模式选择分析方法
-        if mode == "parallel":
-            return self.batch_analyze_parallel(stock_codes, period, selected_agents, max_workers, progress_callback)
-        else:
-            return self.batch_analyze_sequential(stock_codes, period, selected_agents, progress_callback)
-    
-    # ==================== 分析结果保存 ====================
+    def __init__(self, stock_pool_backend: StockPoolManager = stock_pool_manager):
+        self.stock_pool_backend = stock_pool_backend
+        self.db = stock_pool_backend.db
 
-    def generate_portfolio_review(self, previous_record: Optional[Dict],
-                                  current_record: Dict,
-                                  stock: Dict,
-                                  final_decision: Dict) -> Dict:
-        """
-        基于上一条历史和本次分析生成持仓复盘。
+    def _holding_pool_id(self) -> int:
+        return self.stock_pool_backend.get_holding_pool()["id"]
 
-        当前版本使用确定性规则生成结构化复盘，避免额外LLM调用影响批量任务稳定性。
-        """
-        return portfolio_review.build_portfolio_review(
-            previous_record, current_record, stock, final_decision
+    def add_stock(
+        self,
+        code: str,
+        name: str,
+        cost_price: Optional[float] = None,
+        quantity: Optional[int] = None,
+        note: str = "",
+        auto_monitor: bool = True,
+    ) -> Tuple[bool, str, Optional[int]]:
+        return self.stock_pool_backend.add_stock(
+            self._holding_pool_id(),
+            code=code,
+            name=name,
+            cost_price=cost_price,
+            quantity=quantity,
+            note=note or "",
+            auto_monitor=auto_monitor,
         )
 
-    def _build_next_watchpoints(self, current_record: Dict, final_decision: Dict) -> List[str]:
-        """生成下次复盘关注点。"""
-        return portfolio_review.build_next_watchpoints(current_record, final_decision)
+    def update_stock(self, stock_id: int, **kwargs) -> Tuple[bool, str]:
+        return self.stock_pool_backend.update_stock(stock_id, **kwargs)
 
-    def _build_review_summary(self, code: str, name: str, review_status: str,
-                              price_change_pct, plan_check_parts: List[str],
-                              rating_change: str) -> str:
-        """生成一行复盘摘要。"""
-        return portfolio_review.build_review_summary(
-            code, name, review_status, price_change_pct, plan_check_parts, rating_change
+    def delete_stock(self, stock_id: int) -> Tuple[bool, str]:
+        return self.stock_pool_backend.remove_stock(stock_id)
+
+    def get_stock(self, stock_id: int) -> Optional[Dict]:
+        return self.db.get_item(stock_id)
+
+    def get_all_stocks(self, auto_monitor_only: bool = False) -> List[Dict]:
+        stocks = self.stock_pool_backend.list_stocks(self._holding_pool_id())
+        if auto_monitor_only:
+            return [stock for stock in stocks if stock.get("auto_monitor")]
+        return stocks
+
+    def search_stocks(self, keyword: str) -> List[Dict]:
+        keyword = (keyword or "").lower()
+        return [
+            stock
+            for stock in self.get_all_stocks()
+            if keyword in stock.get("code", "").lower() or keyword in stock.get("name", "").lower()
+        ]
+
+    def get_stock_count(self) -> int:
+        return self.db.count_items(self._holding_pool_id())
+
+    def analyze_single_stock(self, stock_code: str, period="1y", selected_agents: List[str] = None) -> Dict:
+        return self.stock_pool_backend.analyze_single_stock(stock_code, period, selected_agents)
+
+    def batch_analyze_portfolio(
+        self,
+        mode="sequential",
+        period="1y",
+        selected_agents: List[str] = None,
+        max_workers: int = 3,
+        progress_callback=None,
+        stock_codes: List[str] = None,
+    ) -> Dict:
+        return self.stock_pool_backend.batch_analyze_pools(
+            pool_ids=[self._holding_pool_id()],
+            scope="all",
+            selected_codes=stock_codes,
+            mode=mode,
+            period=period,
+            selected_agents=selected_agents,
+            max_workers=max_workers,
+            progress_callback=progress_callback,
         )
 
     def save_analysis_results(self, analysis_results: Dict) -> List[int]:
-        """
-        保存批量分析结果到数据库
-        
-        Args:
-            analysis_results: 批量分析结果字典
-            
-        Returns:
-            保存的分析记录ID列表
-        """
-        saved_ids = []
-        
-        if not analysis_results.get("success"):
-            print("[WARN] 分析未成功，跳过保存")
-            return saved_ids
-        
-        for item in analysis_results.get("results", []):
-            code = item.get("code")
-            result = item.get("result", {})
-            
-            # 获取持仓股票ID
-            stock = self.db.get_stock_by_code(code)
-            if not stock:
-                print(f"[WARN] 未找到持仓股票: {code}，跳过保存")
-                continue
-            
-            stock_id = stock['id']
-            
-            # 提取分析结果关键信息
-            final_decision = result.get("final_decision", {})
-            stock_info = result.get("stock_info", {})
-            
-            # 使用正确的字段名
-            rating = final_decision.get("rating", "持有")
-            # 确保信心度为float类型，避免Arrow序列化错误
-            confidence_raw = final_decision.get("confidence_level", 5.0)
-            try:
-                confidence = float(confidence_raw)
-                # 确保信心度在合理范围内
-                if confidence < 0:
-                    confidence = 0.0
-                elif confidence > 10:
-                    confidence = 10.0
-            except (ValueError, TypeError):
-                # 如果转换失败，使用默认值
-                confidence = 5.0
-            current_price = _safe_float(stock_info.get("current_price", 0.0)) or 0.0
-            target_price_str = final_decision.get("target_price", "")
-            entry_range = final_decision.get("entry_range", "")
-            take_profit_str = final_decision.get("take_profit", "")
-            stop_loss_str = final_decision.get("stop_loss", "")
-            operation_advice = final_decision.get(
-                "operation_advice",
-                final_decision.get("advice", final_decision.get("summary", ""))
-            )
-            holding_period = final_decision.get("holding_period", "")
-            position_size = final_decision.get("position_size", "")
-            risk_warning = final_decision.get("risk_warning", "")
-            
-            # 解析目标价格
-            import re
-            target_price = None
-            if target_price_str:
-                try:
-                    numbers = re.findall(r'\d+\.?\d*', str(target_price_str))
-                    if numbers:
-                        target_price = float(numbers[0])
-                except:
-                    pass
-            
-            # 解析进场区间：AI 可能返回“37.90-38.50（激进试探）；确认加仓参考39.03-39.85”
-            # 这类带说明和多区间的文本，保存历史时取第一组价格范围。
-            entry_min, entry_max = _extract_first_price_range(entry_range)
-            
-            # 解析止盈止损
-            take_profit, stop_loss = None, None
-            if take_profit_str:
-                try:
-                    numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
-                    if numbers:
-                        take_profit = float(numbers[0])
-                except:
-                    pass
-            
-            if stop_loss_str:
-                try:
-                    numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
-                    if numbers:
-                        stop_loss = float(numbers[0])
-                except:
-                    pass
-            
-            # 生成摘要，优先保存AI实际返回的操作建议
-            summary = operation_advice[:500] if operation_advice else ""
-            final_decision_json = json.dumps(final_decision, ensure_ascii=False, default=str)
-            current_record = {
-                "rating": rating,
-                "confidence": confidence,
-                "current_price": current_price,
-                "target_price": target_price,
-                "entry_min": entry_min,
-                "entry_max": entry_max,
-                "take_profit": take_profit,
-                "stop_loss": stop_loss,
-                "summary": summary,
-                "operation_advice": operation_advice,
-                "holding_period": holding_period,
-                "position_size": position_size,
-                "risk_warning": risk_warning,
-            }
-            previous_record = self.db.get_latest_analysis(stock_id)
-            review = self.generate_portfolio_review(previous_record, current_record, stock, final_decision)
-            review_json = json.dumps(review, ensure_ascii=False, default=str)
-            
-            try:
-                # 保存到数据库
-                analysis_id = self.db.save_analysis(
-                    stock_id, rating, confidence, current_price, target_price,
-                    entry_min, entry_max, take_profit, stop_loss, summary,
-                    operation_advice=operation_advice,
-                    holding_period=holding_period,
-                    position_size=position_size,
-                    risk_warning=risk_warning,
-                    final_decision_json=final_decision_json,
-                    review_status=review.get("review_status", ""),
-                    review_summary=review.get("review_summary", ""),
-                    review_json=review_json
-                )
-                saved_ids.append(analysis_id)
-                result["portfolio_review"] = review
-                result["portfolio_analysis_id"] = analysis_id
-                
-            except Exception as e:
-                print(f"[ERROR] 保存分析结果失败 ({code}): {str(e)}")
-        
-        print(f"\n[OK] 保存分析结果: {len(saved_ids)}条记录")
-        return saved_ids
-    
-    # ==================== 分析历史查询 ====================
-    
+        if "saved_ids" in analysis_results:
+            return analysis_results["saved_ids"]
+        return self.stock_pool_backend.save_analysis_results(analysis_results)
+
     def get_analysis_history(self, stock_id: int, limit: int = 10) -> List[Dict]:
-        """获取股票分析历史"""
-        return self.db.get_analysis_history(stock_id, limit)
-    
+        item = self.db.get_item(stock_id)
+        if not item:
+            return []
+        return self.db.get_analysis_history(
+            pool_id=item["pool_id"],
+            pool_item_id=stock_id,
+            limit=limit,
+        )
+
     def get_latest_analysis(self, stock_id: int) -> Optional[Dict]:
-        """获取最新一次分析"""
-        return self.db.get_latest_analysis(stock_id)
-    
+        item = self.db.get_item(stock_id)
+        if not item:
+            return None
+        return self.db.get_latest_analysis(item["pool_id"], stock_id)
+
     def get_all_latest_analysis(self) -> List[Dict]:
-        """获取所有持仓股票的最新分析"""
-        return self.db.get_all_latest_analysis()
-    
+        records = []
+        for stock in self.get_all_stocks():
+            latest = self.get_latest_analysis(stock["id"]) or {}
+            merged = stock.copy()
+            merged.update(latest)
+            records.append(merged)
+        return records
+
     def get_rating_changes(self, stock_id: int, days: int = 30) -> List[Tuple]:
-        """获取评级变化"""
-        return self.db.get_rating_changes(stock_id, days)
+        history = list(reversed(self.get_analysis_history(stock_id, limit=days * 3)))
+        changes = []
+        for previous, current in zip(history, history[1:]):
+            if previous.get("rating") != current.get("rating"):
+                changes.append((
+                    current.get("analysis_time"),
+                    previous.get("rating"),
+                    current.get("rating"),
+                ))
+        return changes
 
 
-# 创建全局实例
 portfolio_manager = PortfolioManager()
 
-
-if __name__ == "__main__":
-    # 测试代码
-    print("="*60)
-    print("持仓管理器测试")
-    print("="*60)
-    
-    manager = PortfolioManager()
-    
-    # 测试添加持仓
-    success, msg, stock_id = manager.add_stock("000001", "平安银行", 12.5, 1000, "测试持仓")
-    print(f"\n添加持仓: {msg}")
-    
-    # 测试获取所有持仓
-    stocks = manager.get_all_stocks()
-    print(f"\n持仓数量: {len(stocks)}")
-    for stock in stocks:
-        print(f"  {stock['code']} {stock['name']} - 成本:{stock['cost_price']}, 数量:{stock['quantity']}")
-    
-    print("\n[OK] 持仓管理器测试完成")

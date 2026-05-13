@@ -22,6 +22,7 @@ from src.aiagents_stock.features.sector_strategy.ui import display_sector_strate
 from src.aiagents_stock.features.longhubang.ui import display_longhubang
 from src.aiagents_stock.features.smart_monitor.ui import smart_monitor_ui
 from src.aiagents_stock.features.news_flow.ui import display_news_flow_monitor
+from src.aiagents_stock.app.state import clear_pages
 from src.aiagents_stock.features.stock_analysis.service import (
     analyze_single_stock_for_batch as analyze_single_stock_for_batch_service,
     fetch_stock_data,
@@ -293,7 +294,7 @@ def main():
         if st.button("🏠 股票分析", width='stretch', key="nav_home", help="返回首页，进行单只股票的深度分析"):
             # 清除所有功能页面标志
             for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                       'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_low_price_bull', 'show_news_flow', 'show_macro_cycle', 'show_macro_analysis', 'show_value_stock']:
+                       'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_stock_pool', 'show_low_price_bull', 'show_news_flow', 'show_macro_cycle', 'show_macro_analysis', 'show_value_stock']:
                 if key in st.session_state:
                     del st.session_state[key]
 
@@ -383,10 +384,11 @@ def main():
 
             if st.button("📊 持仓分析", width='stretch', key="nav_portfolio", help="投资组合分析与定时跟踪"):
                 st.session_state.show_portfolio = True
-                for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                           'show_sector_strategy', 'show_longhubang', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow', 'show_macro_analysis']:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                clear_pages(except_key="show_portfolio")
+
+            if st.button("⭐ 股票池", width='stretch', key="nav_stock_pool", help="管理持仓、自选和自定义股票池"):
+                st.session_state.show_stock_pool = True
+                clear_pages(except_key="show_stock_pool")
 
             if st.button("🤖 AI盯盘", width='stretch', key="nav_smart_monitor", help="DeepSeek AI自动盯盘决策交易（支持A股T+1）"):
                 st.session_state.show_smart_monitor = True
@@ -585,6 +587,12 @@ def main():
     # 检查是否显示环境配置
     if 'show_config' in st.session_state and st.session_state.show_config:
         display_config_manager()
+        return
+
+    # 检查是否显示股票池
+    if 'show_stock_pool' in st.session_state and st.session_state.show_stock_pool:
+        from src.aiagents_stock.features.stock_pool.ui import display_stock_pool_manager
+        display_stock_pool_manager()
         return
 
     # 主界面

@@ -530,13 +530,24 @@ def _pool_ids(payload: Dict[str, Any]) -> list[int]:
     return [int(item) for item in raw]
 
 
+def _selected_codes(payload: Dict[str, Any]) -> Optional[list[str]]:
+    raw = payload.get("selected_codes")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        raw = [item.strip() for item in raw.replace("，", ",").split(",") if item.strip()]
+    elif not isinstance(raw, Iterable):
+        raw = [raw]
+    return [str(item).strip().upper() for item in raw if str(item).strip()]
+
+
 def _run_stock_pool_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     from src.aiagents_stock.features.stock_pool.manager import stock_pool_manager
 
     result = stock_pool_manager.batch_analyze_pools(
         pool_ids=_pool_ids(payload),
         scope=str(payload.get("scope") or "today_unanalysed"),
-        selected_codes=payload.get("selected_codes"),
+        selected_codes=_selected_codes(payload),
         tag_filter=payload.get("tag_filter"),
         mode=str(payload.get("mode") or "sequential"),
         period=str(payload.get("period") or "1y"),

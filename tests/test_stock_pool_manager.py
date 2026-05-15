@@ -108,6 +108,39 @@ class StockPoolManagerTest(unittest.TestCase):
         self.assertEqual(len(targets["600519.SH"]), 1)
         self.assertEqual(targets["600519.SH"][0]["pool_id"], watchlist["id"])
 
+    def test_parallel_selected_stocks_returns_all_successful_results(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = StockPoolRepository(Path(tmpdir) / "stock_pools.db", auto_migrate=False)
+            manager = StockPoolManager(repository=repo, model="test-model")
+            watchlist = repo.get_watchlist_pool()
+            repo.add_item(watchlist["id"], "600519.SH", "贵州茅台")
+            repo.add_item(watchlist["id"], "000001.SZ", "平安银行")
+
+            calls = []
+
+            def recording_analysis(*args, **kwargs):
+                calls.append(kwargs["symbol"])
+                return fake_analysis(*args, **kwargs)
+
+            with patch(
+                "src.aiagents_stock.features.stock_pool.manager.analyze_single_stock_for_batch",
+                side_effect=recording_analysis,
+            ):
+                result = manager.batch_analyze_pools(
+                    [watchlist["id"]],
+                    selected_codes=["600519.SH", "000001.SZ"],
+                    scope="all",
+                    mode="parallel",
+                    max_workers=2,
+                )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["succeeded"], 2)
+        self.assertEqual(result["failed"], 0)
+        self.assertCountEqual([item["code"] for item in result["results"]], ["600519.SH", "000001.SZ"])
+        self.assertCountEqual(calls, ["600519.SH", "000001.SZ"])
+
     def test_add_stock_resolves_name_when_only_code_is_provided(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = StockPoolRepository(Path(tmpdir) / "stock_pools.db", auto_migrate=False)

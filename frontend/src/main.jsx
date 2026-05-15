@@ -13,7 +13,9 @@ import {
   Bot,
   BriefcaseBusiness,
   CalendarClock,
+  CheckSquare,
   Database,
+  Eraser,
   Gauge,
   History,
   LayoutDashboard,
@@ -244,6 +246,65 @@ function Table({ rows, columns, preset }) {
               ))}
             </tr>
           ))}
+        </tbody>
+      </table>
+      {data.length > 200 ? <p className="muted">仅展示前 200 条，共 {data.length} 条</p> : null}
+    </div>
+  );
+}
+
+function stockRowCode(row) {
+  return String(row?.code || row?.symbol || row?.stock_code || "").trim().toUpperCase();
+}
+
+function StockPoolSelectionTable({ rows, selectedCodes, onToggleCode, onSelectAll }) {
+  const data = Array.isArray(rows) ? rows : [];
+  if (!data.length) return <p className="muted">暂无记录</p>;
+
+  const selectedSet = new Set(selectedCodes);
+  const codes = Array.from(new Set(data.map(stockRowCode).filter(Boolean)));
+  const allSelected = codes.length > 0 && codes.every((code) => selectedSet.has(code));
+  const displayColumns = ["code", "name", "tags", "status", "created_at"].filter((col) => (
+    col === "code" || data.some((row) => hasDisplayValue(tableCellValue(row, col)))
+  ));
+
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th className="select-column">
+              <input
+                aria-label="选择全部股票"
+                type="checkbox"
+                checked={allSelected}
+                onChange={() => onSelectAll(allSelected ? [] : codes)}
+              />
+            </th>
+            {displayColumns.map((col) => <th key={col}>{titleize(col)}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {data.slice(0, 200).map((row, index) => {
+            const code = stockRowCode(row);
+            const isSelected = Boolean(code && selectedSet.has(code));
+            return (
+              <tr key={row.id || code || index} className={isSelected ? "selected-row" : ""}>
+                <td className="select-column">
+                  <input
+                    aria-label={`选择 ${code || index + 1}`}
+                    type="checkbox"
+                    disabled={!code}
+                    checked={isSelected}
+                    onChange={() => code && onToggleCode(code)}
+                  />
+                </td>
+                {displayColumns.map((col) => (
+                  <td key={col}>{formatCell(tableCellValue(row, col))}</td>
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       {data.length > 200 ? <p className="muted">仅展示前 200 条，共 {data.length} 条</p> : null}
@@ -846,6 +907,105 @@ function HistoryDetailView({ detail }) {
       <details className="raw-details">
         <summary>查看原始数据</summary>
         <JsonBlock value={detail} />
+      </details>
+    </div>
+  );
+}
+
+function formatElapsedSeconds(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return "";
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}分${Math.round(seconds % 60)}秒`;
+  return `${formatNumber(seconds, 1)}秒`;
+}
+
+function normalizeStockPoolAnalysisItem(item, index) {
+  const result = item?.result || {};
+  const stockInfo = result.stock_info || {};
+  const finalDecision = result.final_decision || {};
+  const poolItems = Array.isArray(item?.pool_items) ? item.pool_items : [];
+  const primaryPoolItem = poolItems[0] || {};
+  const symbol = result.symbol || stockInfo.symbol || item?.code || primaryPoolItem.code || "";
+  const stockName = stockInfo.name || primaryPoolItem.name || "";
+  const rating = finalDecision.rating || (result.success === false ? "失败" : "完成");
+  const key = `${symbol || "stock"}-${index}`;
+  return {
+    key,
+    symbol,
+    stockName,
+    rating,
+    poolNames: poolItems.map((poolItem) => poolItem.pool_name).filter(Boolean),
+    currentPrice: stockInfo.current_price,
+    detail: {
+      ...result,
+      symbol,
+      stock_name: stockName,
+      pool_items: poolItems,
+    },
+  };
+}
+
+function StockPoolAnalysisResultView({ value }) {
+  const items = useMemo(
+    () => (value?.results || []).map((item, index) => normalizeStockPoolAnalysisItem(item, index)),
+    [value],
+  );
+  const [selectedKey, setSelectedKey] = useState("");
+  if (!value) return <p className="muted">暂无分析结果</p>;
+  const selectedItem = items.find((item) => item.key === selectedKey) || items[0];
+  const failures = Array.isArray(value.failed_stocks) ? value.failed_stocks : [];
+  const metrics = [
+    { label: "分析模式", value: value.mode === "parallel" ? "并发" : "顺序" },
+    { label: "总数", value: value.total },
+    { label: "成功", value: value.succeeded },
+    { label: "失败", value: value.failed },
+    { label: "耗时", value: formatElapsedSeconds(value.elapsed_time) },
+    { label: "监测同步", value: value.sync_result ? `新增 ${value.sync_result.added || 0}，更新 ${value.sync_result.updated || 0}` : "" },
+  ];
+
+  return (
+    <div className="stock-pool-result-view">
+      {value.error ? <p className="error-text">{value.error}</p> : null}
+      <MetricStrip items={metrics} />
+      {items.length ? (
+        <div className="stock-pool-result-grid">
+          <div className="record-list">
+            {items.map((item) => (
+              <button
+                key={item.key}
+                className={selectedItem?.key === item.key ? "active" : ""}
+                onClick={() => setSelectedKey(item.key)}
+              >
+                <strong>{item.symbol} {item.stockName}</strong>
+                <span>
+                  {item.rating}
+                  {item.currentPrice ? ` · 当前价 ${item.currentPrice}` : ""}
+                  {item.poolNames.length ? ` · ${item.poolNames.join("、")}` : ""}
+                </span>
+              </button>
+            ))}
+          </div>
+          <HistoryDetailView detail={selectedItem?.detail} />
+        </div>
+      ) : (
+        <p className="muted">暂无成功分析结果</p>
+      )}
+      {failures.length ? (
+        <section className="report-section">
+          <h3>失败股票</h3>
+          <div className="stock-pool-failures">
+            {failures.map((item, index) => (
+              <div key={`${item.code || item.symbol || index}-${index}`}>
+                <strong>{item.code || item.symbol || `#${index + 1}`}</strong>
+                <span>{item.error || item.message || "分析失败"}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+      <details className="raw-details">
+        <summary>查看原始批量结果</summary>
+        <JsonBlock value={value} />
       </details>
     </div>
   );
@@ -1838,15 +1998,28 @@ function StockPoolPage() {
   const [stockForm, setStockForm] = useState({ code: "", name: "", tags: "" });
   const [poolForm, setPoolForm] = useState({ name: "", description: "" });
   const [importText, setImportText] = useState("");
+  const [selectedStockCodes, setSelectedStockCodes] = useState([]);
+  const [analysisMode, setAnalysisMode] = useState("sequential");
+  const [maxWorkers, setMaxWorkers] = useState(3);
   const stocks = useAsync(
     () => (selectedPoolId ? request(`/stock-pools/${selectedPoolId}/stocks`) : Promise.resolve({ stocks: [] })),
     [selectedPoolId],
   );
+  const poolStocks = Array.isArray(stocks.data?.stocks) ? stocks.data.stocks : [];
+  const availableStockCodes = useMemo(() => (
+    Array.from(new Set((stocks.data?.stocks || []).map(stockRowCode).filter(Boolean)))
+  ), [stocks.data]);
   useEffect(() => {
     if (!selectedPoolId && pools.data?.pools?.length) {
       setSelectedPoolId(String(pools.data.pools[0].id));
     }
   }, [pools.data, selectedPoolId]);
+  useEffect(() => {
+    setSelectedStockCodes([]);
+  }, [selectedPoolId]);
+  useEffect(() => {
+    setSelectedStockCodes((prev) => prev.filter((code) => availableStockCodes.includes(code)));
+  }, [availableStockCodes]);
   const createPool = async () => {
     await request("/stock-pools", { method: "POST", body: JSON.stringify(poolForm) });
     setPoolForm({ name: "", description: "" });
@@ -1861,6 +2034,23 @@ function StockPoolPage() {
     await request(`/stock-pools/${selectedPoolId}/batch-import`, { method: "POST", body: JSON.stringify({ input: importText }) });
     setImportText("");
     stocks.reload();
+  };
+  const toggleStockSelection = (code) => {
+    setSelectedStockCodes((prev) => (
+      prev.includes(code) ? prev.filter((item) => item !== code) : [...prev, code]
+    ));
+  };
+  const startPoolAnalysis = () => {
+    const selectedCodes = selectedStockCodes.filter((code) => availableStockCodes.includes(code));
+    const workerCount = Math.max(1, Math.min(10, Number(maxWorkers) || 3));
+    start("/stock-pools/analyze", {
+      pool_ids: [Number(selectedPoolId)],
+      selected_codes: selectedCodes,
+      scope: "all",
+      mode: analysisMode,
+      max_workers: workerCount,
+      auto_sync_monitor: true,
+    });
   };
   return (
     <Page title="股票池" subtitle="股票池管理、批量导入、池内分析和历史复盘">
@@ -1894,10 +2084,22 @@ function StockPoolPage() {
       </section>
       <section className="panel">
         <div className="panel-heading">
-          <h2>池内股票</h2>
-          <Button icon={RefreshCw} variant="secondary" onClick={stocks.reload}>刷新</Button>
+          <div>
+            <h2>池内股票</h2>
+            <p className="muted compact-text">已选 {selectedStockCodes.length} / {availableStockCodes.length}</p>
+          </div>
+          <div className="inline-actions">
+            <Button icon={CheckSquare} variant="secondary" onClick={() => setSelectedStockCodes(availableStockCodes)} disabled={!availableStockCodes.length}>全选</Button>
+            <Button icon={Eraser} variant="secondary" onClick={() => setSelectedStockCodes([])} disabled={!selectedStockCodes.length}>清空</Button>
+            <Button icon={RefreshCw} variant="secondary" onClick={stocks.reload}>刷新</Button>
+          </div>
         </div>
-        <DataView value={stocks.data?.stocks} />
+        <StockPoolSelectionTable
+          rows={poolStocks}
+          selectedCodes={selectedStockCodes}
+          onToggleCode={toggleStockSelection}
+          onSelectAll={setSelectedStockCodes}
+        />
       </section>
       <section className="grid-two">
         <div className="panel">
@@ -1907,10 +2109,29 @@ function StockPoolPage() {
         </div>
         <div className="panel">
           <h2>池内分析</h2>
-          <Button icon={Play} onClick={() => start("/stock-pools/analyze", { pool_ids: [Number(selectedPoolId)], mode: "sequential", auto_sync_monitor: true })} disabled={!selectedPoolId}>开始分析</Button>
+          <div className="analysis-controls">
+            <div className="field">
+              <span>分析模式</span>
+              <div className="segmented compact-segmented">
+                <button type="button" className={analysisMode === "sequential" ? "active" : ""} onClick={() => setAnalysisMode("sequential")}>顺序</button>
+                <button type="button" className={analysisMode === "parallel" ? "active" : ""} onClick={() => setAnalysisMode("parallel")}>并发</button>
+              </div>
+            </div>
+            <Field label="并发数">
+              <input
+                type="number"
+                min="1"
+                max="10"
+                value={maxWorkers}
+                disabled={analysisMode !== "parallel"}
+                onChange={(e) => setMaxWorkers(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+              />
+            </Field>
+          </div>
+          <Button icon={Play} onClick={startPoolAnalysis} disabled={!selectedPoolId || selectedStockCodes.length === 0}>分析选中股票</Button>
         </div>
       </section>
-      <JobPanel job={job} onClear={clear} />
+      <JobPanel job={job} onClear={clear} renderResult={StockPoolAnalysisResultView} title="股票池分析结果" />
     </Page>
   );
 }

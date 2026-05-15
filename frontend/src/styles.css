@@ -135,6 +135,11 @@ h3 {
   color: #627386;
 }
 
+.compact-text {
+  margin-bottom: 0;
+  font-size: 13px;
+}
+
 .panel,
 .metric {
   background: #ffffff;
@@ -328,6 +333,23 @@ textarea {
   color: #ffffff;
 }
 
+.compact-segmented {
+  margin-bottom: 0;
+  width: 100%;
+}
+
+.compact-segmented button {
+  flex: 1;
+}
+
+.analysis-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px;
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
 .check-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -412,6 +434,21 @@ th {
   top: 0;
 }
 
+.select-column {
+  width: 48px;
+  text-align: center;
+}
+
+.select-column input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
+}
+
+.selected-row td {
+  background: #f3fbf9;
+}
+
 .json-block {
   background: #0f1b2b;
   color: #d8e6f5;
@@ -490,6 +527,41 @@ th {
 .history-detail {
   display: grid;
   gap: 18px;
+}
+
+.stock-pool-result-view {
+  display: grid;
+  gap: 18px;
+}
+
+.stock-pool-result-grid {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.stock-pool-result-grid .history-detail {
+  min-width: 0;
+}
+
+.stock-pool-failures {
+  display: grid;
+  gap: 8px;
+}
+
+.stock-pool-failures div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #f0caca;
+  background: #fff7f7;
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+
+.stock-pool-failures span {
+  color: #8a3a3a;
+  font-size: 13px;
 }
 
 .history-title {
@@ -757,6 +829,7 @@ th {
   .split,
   .strategy-grid,
   .agent-grid,
+  .stock-pool-result-grid,
   .main-force-metrics,
   .main-force-notes {
     grid-template-columns: 1fr;

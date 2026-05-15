@@ -1,1 +1,1 @@
-"""Streamlit application package."""
+"""ASGI application package."""

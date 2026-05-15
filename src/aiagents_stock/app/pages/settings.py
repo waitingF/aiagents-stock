@@ -16,25 +16,25 @@ class ConfigManager:
         self.default_config = {
             "DEEPSEEK_API_KEY": {
                 "value": "",
-                "description": "DeepSeek API密钥",
+                "description": "DeepSeek 接口密钥",
                 "required": True,
                 "type": "password"
             },
             "DEEPSEEK_BASE_URL": {
                 "value": "https://api.deepseek.com/v1",
-                "description": "DeepSeek API地址",
+                "description": "DeepSeek 接口地址",
                 "required": False,
                 "type": "text"
             },
             "DEFAULT_MODEL_NAME": {
                 "value": "deepseek-chat",
-                "description": "AI模型名称（支持OpenAI兼容模型）",
+                "description": "智能模型名称（支持 OpenAI 兼容模型）",
                 "required": False,
                 "type": "text"
             },
             "TUSHARE_TOKEN": {
                 "value": "",
-                "description": "Tushare数据接口Token（可选）",
+                "description": "Tushare 数据接口令牌（可选）",
                 "required": False,
                 "type": "password"
             },
@@ -46,7 +46,7 @@ class ConfigManager:
             },
             "MINIQMT_ACCOUNT_ID": {
                 "value": "",
-                "description": "MiniQMT账户ID",
+                "description": "MiniQMT账户编号",
                 "required": False,
                 "type": "text"
             },
@@ -100,26 +100,26 @@ class ConfigManager:
             },
             "WEBHOOK_ENABLED": {
                 "value": "false",
-                "description": "启用Webhook通知",
+                "description": "启用通知回调",
                 "required": False,
                 "type": "boolean"
             },
             "WEBHOOK_TYPE": {
                 "value": "dingtalk",
-                "description": "Webhook类型（dingtalk/feishu）",
+                "description": "通知回调类型（钉钉/飞书）",
                 "required": False,
                 "type": "select",
                 "options": ["dingtalk", "feishu"]
             },
             "WEBHOOK_URL": {
                 "value": "",
-                "description": "Webhook地址",
+                "description": "通知回调地址",
                 "required": False,
                 "type": "text"
             },
             "WEBHOOK_KEYWORD": {
                 "value": "aiagents通知",
-                "description": "Webhook自定义关键词（钉钉安全验证）",
+                "description": "通知回调自定义关键词（钉钉安全验证）",
                 "required": False,
                 "type": "text"
             },
@@ -170,12 +170,12 @@ class ConfigManager:
         """保存配置到.env文件"""
         try:
             lines = []
-            lines.append("# AI股票分析系统环境配置")
+            lines.append("# 智能股票分析系统环境配置")
             lines.append("# 由系统自动生成和管理")
             lines.append("")
             
             # DeepSeek配置
-            lines.append("# ========== DeepSeek API配置 ==========")
+            lines.append("# ========== DeepSeek 接口配置 ==========")
             lines.append(f'DEEPSEEK_API_KEY="{config.get("DEEPSEEK_API_KEY", "")}"')
             lines.append(f'DEEPSEEK_BASE_URL="{config.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")}"')
             lines.append("")
@@ -203,8 +203,8 @@ class ConfigManager:
             lines.append(f'EMAIL_TO="{config.get("EMAIL_TO", "")}"')
             lines.append("")
             
-            # Webhook通知配置
-            lines.append("# ========== Webhook通知配置（可选）==========")
+            # 通知回调配置
+            lines.append("# ========== 通知回调配置（可选）==========")
             lines.append(f'WEBHOOK_ENABLED="{config.get("WEBHOOK_ENABLED", "false")}"')
             lines.append(f'WEBHOOK_TYPE="{config.get("WEBHOOK_TYPE", "dingtalk")}"')
             lines.append(f'WEBHOOK_URL="{config.get("WEBHOOK_URL", "")}"')
@@ -243,11 +243,11 @@ class ConfigManager:
             if info["required"] and not config.get(key):
                 return False, f"必填项 {info['description']} 不能为空"
         
-        # 验证API Key格式（简单检查长度）
+        # 验证接口密钥格式（简单检查长度）
         if config.get("DEEPSEEK_API_KEY"):
             api_key = config.get("DEEPSEEK_API_KEY", "")
             if len(api_key) < 20:
-                return False, "DeepSeek API Key格式不正确（长度太短）"
+                return False, "DeepSeek 接口密钥格式不正确（长度太短）"
         
         return True, "配置验证通过"
     

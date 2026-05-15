@@ -34,6 +34,10 @@ class MainForceStockSelector:
             (success, dataframe, message)
         """
         try:
+            days_ago = 90 if days_ago is None else days_ago
+            min_market_cap = 50.0 if min_market_cap is None else min_market_cap
+            max_market_cap = 5000.0 if max_market_cap is None else max_market_cap
+
             # 如果没有提供开始日期，根据days_ago计算
             if not start_date:
                 date_obj = datetime.now() - timedelta(days=days_ago)
@@ -153,6 +157,10 @@ class MainForceStockSelector:
         """
         if df is None or df.empty:
             return df
+
+        max_range_change = 30.0 if max_range_change is None else max_range_change
+        min_market_cap = 50.0 if min_market_cap is None else min_market_cap
+        max_market_cap = 5000.0 if max_market_cap is None else max_market_cap
         
         print(f"\n{'='*60}")
         print(f"🔍 智能筛选中...")

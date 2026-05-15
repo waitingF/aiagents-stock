@@ -15,10 +15,14 @@ DEEPSEEK_API_KEY=your_api_key_here
 
 ### 启动系统
 ```bash
-streamlit run app.py
+cd frontend
+npm install
+npm run build
+cd ..
+python run.py --host 127.0.0.1 --port 8503
 ```
 
-访问：http://localhost:8501
+访问：http://localhost:8503
 
 ---
 

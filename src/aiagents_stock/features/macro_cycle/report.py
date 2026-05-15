@@ -405,6 +405,37 @@ def generate_macro_cycle_markdown(result_data: dict) -> str:
     return "\n".join(parts)
 
 
+def extract_macro_cycle_summary(result_data: dict, limit: int = 500) -> str:
+    """Extract a compact summary for report archives."""
+    if result_data.get("error"):
+        return _compact_summary(f"分析失败: {result_data.get('error')}", limit)
+
+    agents = result_data.get("agents_analysis", {})
+    chief = agents.get("chief", {}) if isinstance(agents, dict) else {}
+    chief_text = chief.get("analysis", "") if isinstance(chief, dict) else ""
+    if chief_text:
+        return _compact_summary(_first_non_empty_line(chief_text), limit)
+
+    data_errors = result_data.get("data_errors") or []
+    if data_errors:
+        return _compact_summary("宏观周期分析已完成，部分数据存在缺口: " + "；".join(data_errors[:3]), limit)
+
+    return "宏观周期分析已完成。"
+
+
+def _first_non_empty_line(text: str) -> str:
+    for line in str(text or "").splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return ""
+
+
+def _compact_summary(text: str, limit: int) -> str:
+    clean = " ".join(str(text or "").split())
+    return clean[:limit].rstrip() if len(clean) > limit else clean
+
+
 # 测试
 if __name__ == "__main__":
     print("=" * 60)

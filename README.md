@@ -299,8 +299,8 @@ LOW_PRICE_BULL_HOLDING_DAYS=5            # 持股天数限制
 # 安装依赖
 pip install schedule
 
-# 启动应用
-streamlit run app.py
+# 启动 FastAPI + React 应用
+python run.py --host 127.0.0.1 --port 8503
 
 # 点击侧边栏"📊 持仓分析"进入功能
 ```
@@ -711,7 +711,15 @@ MINIQMT_PORT=58610
 
 **注意**：环境变量文件的优先级高于系统环境变量。
 
-### 4. 启动系统
+### 4. 构建前端
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+### 5. 启动系统
 **Windows PowerShell：**
 ```bash
 .\venv\Scripts\Activate.ps1
@@ -729,16 +737,16 @@ python run.py
 **Windows PowerShell：**
 ```bash
 .\venv\Scripts\Activate.ps1
-streamlit run app.py --server.port 8503
+python run.py --host 127.0.0.1 --port 8503
 ```
 
 **macOS / Linux / Unix：**
 ```bash
 source venv/bin/activate
-streamlit run app.py --server.port 8503
+python run.py --host 127.0.0.1 --port 8503
 ```
 
-### 5. 访问系统
+### 6. 访问系统
 打开浏览器访问：http://localhost:8503
 
 ---

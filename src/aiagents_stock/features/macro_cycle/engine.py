@@ -137,7 +137,37 @@ class MacroCycleEngine:
             traceback.print_exc()
             results["error"] = str(e)
 
+        self._persist_report(results)
         return results
+
+    def _persist_report(self, results: Dict[str, Any]) -> None:
+        try:
+            from src.aiagents_stock.features.macro_cycle.report import (
+                extract_macro_cycle_summary,
+                generate_macro_cycle_markdown,
+            )
+            from src.aiagents_stock.features.macro_report_history import macro_report_history
+
+            markdown = generate_macro_cycle_markdown(results)
+            summary = extract_macro_cycle_summary(results)
+            results["markdown"] = markdown
+            results["summary"] = summary
+            report_id = macro_report_history.save_report(
+                module="macro-cycle",
+                timestamp=results.get("timestamp"),
+                model=self.model,
+                result=results,
+                summary=summary,
+                markdown=markdown,
+            )
+            results["report_id"] = report_id
+            results["saved_report"] = {
+                "id": report_id,
+                "module": "macro-cycle",
+                "timestamp": results.get("timestamp"),
+            }
+        except Exception as exc:
+            results["persistence_error"] = str(exc)
 
 
 # 测试

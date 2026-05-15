@@ -1,69 +1,62 @@
 #!/usr/bin/env python3
-"""
-AI股票分析系统启动脚本
-运行命令: python run.py
-"""
+"""Run the FastAPI backend and serve the built React frontend."""
 
-import subprocess
+from __future__ import annotations
+
+import argparse
+import importlib
 import sys
-import os
 
-def check_requirements():
-    """检查必要的依赖是否安装"""
-    try:
-        import streamlit
-        import pandas
-        import plotly
-        import yfinance
-        import akshare
-        import openai
-        print("✅ 所有依赖包已安装")
-        return True
-    except ImportError as e:
-        print(f"❌ 缺少依赖包: {e}")
-        print("请运行: pip install -r requirements.txt")
+
+REQUIRED_MODULES = [
+    "fastapi",
+    "uvicorn",
+    "pandas",
+    "plotly",
+    "yfinance",
+    "akshare",
+    "openai",
+]
+
+
+def check_requirements() -> bool:
+    missing = []
+    for module_name in REQUIRED_MODULES:
+        try:
+            importlib.import_module(module_name)
+        except ImportError:
+            missing.append(module_name)
+    if missing:
+        print(f"Missing dependencies: {', '.join(missing)}")
+        print("Run: pip install -r requirements.txt")
         return False
+    return True
 
-def check_config():
-    """检查配置文件"""
-    try:
-        import src.aiagents_stock.core.config as config
-        if not config.DEEPSEEK_API_KEY:
-            print("⚠️  警告: DeepSeek API Key 未配置")
-            print("请在.env中设置 DEEPSEEK_API_KEY")
-            return False
-        print("✅ 配置文件检查通过")
-        return True
-    except ImportError:
-        print("❌ 无法加载配置模块 src.aiagents_stock.core.config")
-        return False
 
-def main():
-    """主函数"""
-    print("🚀 启动AI股票分析系统...")
-    print("=" * 50)
-    
-    # 检查依赖
+def check_config() -> None:
+    import src.aiagents_stock.core.config as config
+
+    if not config.DEEPSEEK_API_KEY:
+        print("Warning: DEEPSEEK_API_KEY is not configured. AI analysis endpoints may fail.")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="AI Agents Stock web server")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8503)
+    parser.add_argument("--reload", action="store_true")
+    args = parser.parse_args()
+
     if not check_requirements():
-        return
-    
-    # 检查配置
-    config_ok = check_config()
-    
-    # 启动Streamlit应用
-    print("🌐 正在启动Web界面...")
-    print("📝 访问地址: http://localhost:8503")
-    print("⏹️  按 Ctrl+C 停止服务")
-    print("=" * 50)
-    
-    try:
-        subprocess.run([
-            sys.executable, "-m", "streamlit", "run", "app.py",
-            "--server.port", "8503",
-            "--server.address", "127.0.0.1"
-        ])
-    except KeyboardInterrupt:
-        print("\n👋 感谢使用AI股票分析系统！")
+        return 1
+    check_config()
+
+    from src.aiagents_stock.app.main import main as serve
+
+    print(f"Serving FastAPI + React at http://{args.host}:{args.port}")
+    serve(host=args.host, port=args.port, reload=args.reload)
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

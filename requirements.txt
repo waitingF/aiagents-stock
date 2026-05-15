@@ -1,4 +1,5 @@
-streamlit>=1.28.0
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
 requests>=2.31.0
 pandas>=2.0.3
 numpy>=1.24.3
@@ -14,6 +15,5 @@ reportlab>=4.0.0
 peewee>=3.17.0
 schedule>=1.2.0
 pywencai>=0.7.0
-jieba>=0.42.1
 beautifulsoup4>=4.12.0
 lxml>=4.9.0

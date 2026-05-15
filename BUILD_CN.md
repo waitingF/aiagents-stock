@@ -125,8 +125,8 @@ docker run --rm agentsstock1:latest npm --version
 docker run --rm agentsstock1:latest python --version
 # 预期: Python 3.12.x
 
-# 检查已安装的Python包
-docker run --rm agentsstock1:latest pip list | grep streamlit
+# 检查FastAPI健康检查
+docker run --rm -p 8503:8503 agentsstock1:latest curl --fail http://localhost:8503/api/health
 ```
 
 ## 🎯 性能对比

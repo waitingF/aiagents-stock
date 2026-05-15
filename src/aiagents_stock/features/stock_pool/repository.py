@@ -8,9 +8,10 @@ to the stock_pool_* tables.
 from __future__ import annotations
 
 import json
+import gc
 import os
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional
@@ -702,7 +703,7 @@ class StockPoolRepository:
             return
 
         holding_pool = self.get_holding_pool()
-        with sqlite3.connect(self.legacy_portfolio_db_path) as legacy_conn:
+        with closing(sqlite3.connect(self.legacy_portfolio_db_path)) as legacy_conn:
             legacy_conn.row_factory = sqlite3.Row
             legacy_cursor = legacy_conn.cursor()
             try:
@@ -765,6 +766,7 @@ class StockPoolRepository:
                 )
 
         self._mark_migration_done(migration_key)
+        gc.collect()
 
     def _legacy_col(self, row: sqlite3.Row, column: str) -> Any:
         return row[column] if column in row.keys() else None

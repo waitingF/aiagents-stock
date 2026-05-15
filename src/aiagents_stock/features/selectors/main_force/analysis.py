@@ -44,6 +44,13 @@ class MainForceAnalyzer:
         Returns:
             分析结果字典
         """
+        if not start_date and days_ago is None:
+            days_ago = 90
+        final_n = final_n or 5
+        max_range_change = 30.0 if max_range_change is None else max_range_change
+        min_market_cap = 50.0 if min_market_cap is None else min_market_cap
+        max_market_cap = 5000.0 if max_market_cap is None else max_market_cap
+
         result = {
             'success': False,
             'total_stocks': 0,

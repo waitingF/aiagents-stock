@@ -183,6 +183,94 @@ class DragonStrategyEngine:
                 self.repository.finish_run(run_id, "failed", error_message=str(exc))
             raise
 
+    def generate_sector_report(
+        self,
+        date: str | None = None,
+        top_n: int = 20,
+        persist: bool = True,
+    ) -> DragonStrategyReport:
+        """Persist a standalone mainline-sector action report."""
+        trade_date = _trade_date(date)
+        run_id = self.repository.create_run("sectors", {"date": trade_date, "top_n": top_n}) if persist else None
+        try:
+            market = self.market_service.evaluate(trade_date)
+            limit_up_df = self._safe_provider_call("get_limit_up_pool", trade_date, default=pd.DataFrame())
+            sectors = self.track_main_sectors(
+                date=trade_date,
+                limit_up_df=limit_up_df,
+                persist=False,
+                top_n=top_n,
+            )
+            report = DragonStrategyReport(
+                report_date=trade_date,
+                report_type="sectors",
+                market=market,
+                leaders=[],
+                sectors=sectors,
+                metadata={"workflow_step": 2, "diagnostics": self.last_sector_diagnostics},
+            )
+            report.markdown = format_markdown_report(report)
+            report_id = self.repository.save_report(report) if persist else None
+            if run_id:
+                self.repository.finish_run(run_id, "success", report_id)
+            return report
+        except Exception as exc:
+            if run_id:
+                self.repository.finish_run(run_id, "failed", error_message=str(exc))
+            raise
+
+    def generate_trend_report(
+        self,
+        date: str | None = None,
+        top_n: int = 20,
+        persist: bool = True,
+    ) -> DragonStrategyReport:
+        """Persist a standalone trend-tracking action report."""
+        trade_date = _trade_date(date)
+        run_id = self.repository.create_run("trends", {"date": trade_date, "top_n": top_n}) if persist else None
+        try:
+            market = self.market_service.evaluate(trade_date)
+            trend_candidates = self.scan_trends(date=trade_date, top_n=top_n)
+            report = DragonStrategyReport(
+                report_date=trade_date,
+                report_type="trends",
+                market=market,
+                leaders=[],
+                trend_tracking=trend_candidates,
+                metadata={"workflow_step": 3, "top_n": top_n},
+            )
+            report.markdown = format_markdown_report(report)
+            report_id = self.repository.save_report(report) if persist else None
+            if run_id:
+                self.repository.finish_run(run_id, "success", report_id)
+            return report
+        except Exception as exc:
+            if run_id:
+                self.repository.finish_run(run_id, "failed", error_message=str(exc))
+            raise
+
+    def generate_backtest_report(self, date: str | None = None, persist: bool = True) -> DragonStrategyReport:
+        """Persist the current backtest action output as a report."""
+        trade_date = _trade_date(date)
+        run_id = self.repository.create_run("backtest", {"date": trade_date}) if persist else None
+        try:
+            report = self.run_dragon_mvp(date=trade_date, persist=False)
+            report.report_type = "backtest"
+            report.metadata = {
+                **(report.metadata or {}),
+                "workflow_step": "backtest",
+                "note": "回测动作当前复用龙头评分报告输出。",
+            }
+            report.markdown = format_markdown_report(report)
+            report_id = self.repository.save_report(report) if persist else None
+            if run_id:
+                self.repository.finish_run(run_id, "success", report_id)
+            return report
+        except Exception as exc:
+            if run_id:
+                self.repository.finish_run(run_id, "failed", error_message=str(exc))
+            raise
+
     def run_backtest(
         self,
         signals: Iterable[Any],

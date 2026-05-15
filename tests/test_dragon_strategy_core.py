@@ -10,7 +10,7 @@ from src.aiagents_stock.features.selectors.dragon_strategy.data import AkshareDr
 from src.aiagents_stock.features.selectors.dragon_strategy.leader import screen_limit_up_candidates
 from src.aiagents_stock.features.selectors.dragon_strategy.models import DragonStrategyConfig
 from src.aiagents_stock.features.selectors.dragon_strategy.repository import DragonStrategyRepository
-from src.aiagents_stock.features.selectors.dragon_strategy.sector import compute_sector_signals
+from src.aiagents_stock.features.selectors.dragon_strategy.sector import compute_sector_signals, normalize_industry_ranking
 from src.aiagents_stock.features.selectors.dragon_strategy.sentiment import MarketEnvironmentService, evaluate_market_environment
 from src.aiagents_stock.features.selectors.dragon_strategy.trend import scan_trend_tracking
 from src.aiagents_stock.infrastructure.network.proxy import disable_proxy_env, without_proxy_env
@@ -240,6 +240,59 @@ class DragonStrategyCoreTest(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]["name"], "人工智能")
         self.assertEqual(saved[0]["consecutive_days"], 3)
+
+    def test_sector_ranking_keeps_english_metrics_for_chinese_display(self):
+        industry = pd.DataFrame(
+            {
+                "name": ["人工智能", "机器人"],
+                "rank": [2, 1],
+                "pct_chg": [3.2, 4.1],
+                "amount": [120_000_000.0, 95_000_000.0],
+                "up_stocks": [18, 12],
+                "down_stocks": [3, 2],
+                "flat_stocks": [1, 0],
+            }
+        )
+
+        normalized = normalize_industry_ranking(industry)
+        ai_row = normalized[normalized["name"] == "人工智能"].iloc[0]
+
+        self.assertEqual(int(ai_row["rank"]), 2)
+        self.assertEqual(float(ai_row["pct_chg"]), 3.2)
+        self.assertEqual(float(ai_row["amount"]), 120_000_000.0)
+        self.assertEqual(int(ai_row["stock_count"]), 22)
+        self.assertEqual(int(ai_row["up_stocks"]), 18)
+
+        signals = compute_sector_signals(industry, pd.DataFrame(), date="20260515")
+        ai_signal = next(item for item in signals if item.name == "人工智能")
+
+        self.assertEqual(ai_signal.rank, 2)
+        self.assertEqual(ai_signal.pct_chg, 3.2)
+        self.assertEqual(ai_signal.amount, 120_000_000.0)
+        self.assertEqual(ai_signal.stock_count, 22)
+        self.assertEqual(ai_signal.up_stocks, 18)
+
+    def test_sector_ranking_derives_total_stock_count_from_up_down_counts(self):
+        industry = pd.DataFrame(
+            {
+                "序号": [1],
+                "板块": ["通用设备"],
+                "涨跌幅": [1.27],
+                "总成交额": [1144.08],
+                "上涨家数": [139],
+                "下跌家数": [108],
+            }
+        )
+
+        normalized = normalize_industry_ranking(industry)
+        row = normalized.iloc[0]
+
+        self.assertEqual(row["name"], "通用设备")
+        self.assertEqual(int(row["rank"]), 1)
+        self.assertEqual(float(row["pct_chg"]), 1.27)
+        self.assertEqual(float(row["amount"]), 1144.08)
+        self.assertEqual(int(row["stock_count"]), 247)
+        self.assertEqual(int(row["up_stocks"]), 139)
 
     def test_trend_scan_and_fixed_holding_backtest(self):
         daily = {"000001": _daily_frame()}

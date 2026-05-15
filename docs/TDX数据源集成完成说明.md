@@ -1,4 +1,4 @@
-# TDX数据源集成完成说明
+﻿# TDX数据源集成完成说明
 
 ## 📅 更新日期
 **2025-11-04**
@@ -154,7 +154,7 @@ TDX_BASE_URL=http://192.168.1.222:8080
 
 ```bash
 # 本地部署
-streamlit run app.py
+python run.py --host 127.0.0.1 --port 8503
 
 # Docker部署
 docker-compose restart

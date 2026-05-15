@@ -108,7 +108,37 @@ class MacroAnalysisEngine:
         except Exception as exc:
             results["error"] = str(exc)
 
+        self._persist_report(results)
         return results
+
+    def _persist_report(self, results: Dict[str, Any]) -> None:
+        try:
+            from src.aiagents_stock.features.macro_analysis.report import (
+                extract_macro_analysis_summary,
+                generate_macro_analysis_markdown,
+            )
+            from src.aiagents_stock.features.macro_report_history import macro_report_history
+
+            markdown = generate_macro_analysis_markdown(results)
+            summary = extract_macro_analysis_summary(results)
+            results["markdown"] = markdown
+            results["summary"] = summary
+            report_id = macro_report_history.save_report(
+                module="macro-analysis",
+                timestamp=results.get("timestamp"),
+                model=self.model,
+                result=results,
+                summary=summary,
+                markdown=markdown,
+            )
+            results["report_id"] = report_id
+            results["saved_report"] = {
+                "id": report_id,
+                "module": "macro-analysis",
+                "timestamp": results.get("timestamp"),
+            }
+        except Exception as exc:
+            results["persistence_error"] = str(exc)
 
     @staticmethod
     def _normalize_sector_view(

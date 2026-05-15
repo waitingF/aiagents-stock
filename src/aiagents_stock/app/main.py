@@ -1,13 +1,26 @@
-"""Streamlit application entrypoint."""
+"""Application entrypoint for the FastAPI + React frontend."""
 
 from __future__ import annotations
 
-from src.aiagents_stock.infrastructure.network.proxy import disable_proxy_env
+import uvicorn
+
+from src.aiagents_stock.api import create_app
 
 
-disable_proxy_env()
-
-from src.aiagents_stock.app.legacy import main
+app = create_app()
 
 
-__all__ = ["main"]
+def main(host: str = "127.0.0.1", port: int = 8503, reload: bool = False) -> None:
+    uvicorn.run(
+        "src.aiagents_stock.app.main:app",
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
+__all__ = ["app", "main"]
+
+
+if __name__ == "__main__":
+    main()

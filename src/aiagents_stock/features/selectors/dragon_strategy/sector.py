@@ -11,9 +11,14 @@ from src.aiagents_stock.features.selectors.dragon_strategy.models import DragonS
 
 
 def _first_matching_column(frame: pd.DataFrame, patterns: list[str]) -> Optional[str]:
+    normalized_columns = [(col, str(col).strip().lower()) for col in frame.columns]
     for pattern in patterns:
-        for col in frame.columns:
-            if pattern in str(col):
+        target = str(pattern).strip().lower()
+        for col, text in normalized_columns:
+            if text == target:
+                return col
+        for col, text in normalized_columns:
+            if target in text:
                 return col
     return None
 
@@ -41,27 +46,47 @@ def _to_float(value: Any, default: Optional[float] = None) -> Optional[float]:
         return default
 
 
+def _numeric_series(frame: pd.DataFrame, column: Optional[str]) -> pd.Series:
+    if not column:
+        return pd.Series([pd.NA] * len(frame), index=frame.index)
+    return pd.to_numeric(frame[column], errors="coerce")
+
+
 def normalize_industry_ranking(frame: pd.DataFrame | None) -> pd.DataFrame:
     """Normalize sector/industry ranking data to stable English columns."""
     if frame is None or frame.empty:
         return pd.DataFrame(columns=["name", "rank", "pct_chg", "amount", "stock_count", "up_stocks", "source", "raw"])
     source = frame.copy()
     col_map = {
-        "name": _first_matching_column(source, ["板块名称", "行业名称", "名称", "板块"]),
-        "rank": _first_matching_column(source, ["排名", "排行", "序号"]),
-        "pct_chg": _first_matching_column(source, ["涨跌幅", "涨幅"]),
-        "amount": _first_matching_column(source, ["总成交额", "成交额", "成交金额", "资金"]),
-        "stock_count": _first_matching_column(source, ["股票家数", "成分股", "家数"]),
-        "up_stocks": _first_matching_column(source, ["上涨家数", "上涨数"]),
+        "name": _first_matching_column(source, ["板块名称", "行业名称", "名称", "板块", "industry", "sector", "name", "f14"]),
+        "rank": _first_matching_column(source, ["排名", "排行", "序号", "rank"]),
+        "pct_chg": _first_matching_column(source, ["涨跌幅", "涨幅", "pct_chg", "change_pct", "pct_change", "f3"]),
+        "amount": _first_matching_column(source, ["总成交额", "成交额", "成交金额", "amount", "turnover_amount", "资金", "f6"]),
+        "stock_count": _first_matching_column(source, ["股票家数", "成份股数", "成分股数", "股票数量", "个股数量", "成分股", "stock_count", "stocks_count", "component_count", "total_stocks"]),
+        "up_stocks": _first_matching_column(source, ["上涨家数", "上涨数", "up_stocks", "up_count", "rise_count", "rising_count", "f104"]),
+        "down_stocks": _first_matching_column(source, ["下跌家数", "下跌数", "down_stocks", "down_count", "fall_count", "falling_count", "f105"]),
+        "flat_stocks": _first_matching_column(source, ["平盘家数", "平盘数", "flat_stocks", "flat_count", "unchanged_count", "f106"]),
     }
     normalized = pd.DataFrame(index=source.index)
-    for target, column in col_map.items():
+    for target in ["name", "rank", "pct_chg", "amount", "stock_count", "up_stocks"]:
+        column = col_map[target]
         normalized[target] = source[column] if column else None
     normalized["name"] = normalized["name"].fillna("").astype(str)
     normalized["pct_chg"] = normalized["pct_chg"].apply(_to_float)
     normalized["amount"] = normalized["amount"].apply(_to_float)
-    normalized["stock_count"] = pd.to_numeric(normalized["stock_count"], errors="coerce")
-    normalized["up_stocks"] = pd.to_numeric(normalized["up_stocks"], errors="coerce")
+    normalized["stock_count"] = _numeric_series(normalized, "stock_count")
+    normalized["up_stocks"] = _numeric_series(normalized, "up_stocks")
+    count_source_columns = {col_map.get(key) for key in ["up_stocks", "down_stocks", "flat_stocks"] if col_map.get(key)}
+    should_derive_count = normalized["stock_count"].isna().all() or col_map.get("stock_count") in count_source_columns
+    if should_derive_count:
+        count_parts = [
+            _numeric_series(source, col_map.get("up_stocks")),
+            _numeric_series(source, col_map.get("down_stocks")),
+            _numeric_series(source, col_map.get("flat_stocks")),
+        ]
+        available_parts = [part for part in count_parts if not part.isna().all()]
+        if available_parts:
+            normalized["stock_count"] = sum(part.fillna(0) for part in available_parts)
     normalized["rank"] = pd.to_numeric(normalized["rank"], errors="coerce")
     if normalized["rank"].isna().all():
         normalized = normalized.sort_values("pct_chg", ascending=False, na_position="last")

@@ -229,7 +229,7 @@ class AkshareDragonDataProvider:
             return pd.DataFrame()
 
     def get_industry_ranking(self, date: str | None = None) -> pd.DataFrame:
-        """Return current industry/sector ranking if AKShare supports it."""
+        """Return current industry/sector ranking from direct Eastmoney or AKShare fallbacks."""
         _ = date
         ak = self._ak()
         direct_fetchers = [
@@ -241,7 +241,7 @@ class AkshareDragonDataProvider:
             (getattr(ak, "stock_board_industry_summary_ths", None), "ths_industry_akshare"),
             (getattr(ak, "stock_board_concept_name_em", None), "eastmoney_concept_akshare"),
         ]
-        fetchers = akshare_fetchers[:1] + direct_fetchers + akshare_fetchers[1:]
+        fetchers = direct_fetchers + akshare_fetchers
         for fetcher, source in fetchers:
             if fetcher is None:
                 continue
@@ -272,12 +272,14 @@ class AkshareDragonDataProvider:
             "f2",
             "f3",
             "f4",
+            "f6",
             "f8",
             "f12",
             "f14",
             "f20",
             "f104",
             "f105",
+            "f106",
             "f128",
             "f136",
         ]
@@ -321,10 +323,12 @@ class AkshareDragonDataProvider:
                 "最新价": pd.to_numeric(raw.get("f2"), errors="coerce"),
                 "涨跌幅": pd.to_numeric(raw.get("f3"), errors="coerce"),
                 "涨跌额": pd.to_numeric(raw.get("f4"), errors="coerce"),
+                "成交额": pd.to_numeric(raw.get("f6"), errors="coerce"),
                 "总市值": pd.to_numeric(raw.get("f20"), errors="coerce"),
                 "换手率": pd.to_numeric(raw.get("f8"), errors="coerce"),
                 "上涨家数": pd.to_numeric(raw.get("f104"), errors="coerce"),
                 "下跌家数": pd.to_numeric(raw.get("f105"), errors="coerce"),
+                "平盘家数": pd.to_numeric(raw.get("f106"), errors="coerce"),
                 "领涨股票": raw.get("f128"),
                 "领涨股票-涨跌幅": pd.to_numeric(raw.get("f136"), errors="coerce"),
                 "source_type": board["source_type"],

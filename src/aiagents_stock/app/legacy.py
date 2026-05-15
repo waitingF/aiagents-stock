@@ -294,7 +294,7 @@ def main():
         if st.button("🏠 股票分析", width='stretch', key="nav_home", help="返回首页，进行单只股票的深度分析"):
             # 清除所有功能页面标志
             for key in ['show_history', 'show_monitor', 'show_config', 'show_main_force',
-                       'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_stock_pool', 'show_low_price_bull', 'show_news_flow', 'show_macro_cycle', 'show_macro_analysis', 'show_value_stock']:
+                       'show_dragon_strategy', 'show_sector_strategy', 'show_longhubang', 'show_portfolio', 'show_stock_pool', 'show_low_price_bull', 'show_news_flow', 'show_macro_cycle', 'show_macro_analysis', 'show_value_stock']:
                 if key in st.session_state:
                     del st.session_state[key]
 
@@ -349,6 +349,10 @@ def main():
                            'show_longhubang', 'show_portfolio', 'show_smart_monitor', 'show_low_price_bull', 'show_news_flow', 'show_macro_analysis']:
                     if key in st.session_state:
                         del st.session_state[key]
+
+            if st.button("🐉 龙头战法", width='stretch', key="nav_dragon_strategy", help="龙头战法、主线板块、趋势跟踪与回测"):
+                st.session_state.show_dragon_strategy = True
+                clear_pages(except_key="show_dragon_strategy")
 
             if st.button("🐉 智瞰龙虎", width='stretch', key="nav_longhubang", help="龙虎榜深度分析"):
                 st.session_state.show_longhubang = True
@@ -583,7 +587,7 @@ def main():
         from src.aiagents_stock.features.macro_cycle.ui import display_macro_cycle
         display_macro_cycle()
         return
-    
+
     # 检查是否显示环境配置
     if 'show_config' in st.session_state and st.session_state.show_config:
         display_config_manager()
@@ -593,6 +597,12 @@ def main():
     if 'show_stock_pool' in st.session_state and st.session_state.show_stock_pool:
         from src.aiagents_stock.features.stock_pool.ui import display_stock_pool_manager
         display_stock_pool_manager()
+        return
+
+    # 检查是否显示龙头战法
+    if 'show_dragon_strategy' in st.session_state and st.session_state.show_dragon_strategy:
+        from src.aiagents_stock.features.selectors.dragon_strategy.ui import display_dragon_strategy
+        display_dragon_strategy()
         return
 
     # 主界面

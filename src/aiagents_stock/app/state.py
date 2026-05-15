@@ -10,6 +10,7 @@ PAGE_KEYS = [
     "show_monitor",
     "show_config",
     "show_main_force",
+    "show_dragon_strategy",
     "show_sector_strategy",
     "show_longhubang",
     "show_portfolio",

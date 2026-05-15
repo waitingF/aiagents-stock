@@ -10,12 +10,18 @@ from src.aiagents_stock.api import create_app
 app = create_app()
 
 
-def main(host: str = "127.0.0.1", port: int = 8503, reload: bool = False) -> None:
+def main(
+    host: str = "127.0.0.1",
+    port: int = 8503,
+    reload: bool = False,
+    access_log: bool = False,
+) -> None:
     uvicorn.run(
         "src.aiagents_stock.app.main:app",
         host=host,
         port=port,
         reload=reload,
+        access_log=access_log,
     )
 
 

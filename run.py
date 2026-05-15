@@ -45,6 +45,11 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8503)
     parser.add_argument("--reload", action="store_true")
+    parser.add_argument(
+        "--access-log",
+        action="store_true",
+        help="Enable per-request Uvicorn access logs.",
+    )
     args = parser.parse_args()
 
     if not check_requirements():
@@ -54,7 +59,7 @@ def main() -> int:
     from src.aiagents_stock.app.main import main as serve
 
     print(f"Serving FastAPI + React at http://{args.host}:{args.port}")
-    serve(host=args.host, port=args.port, reload=args.reload)
+    serve(host=args.host, port=args.port, reload=args.reload, access_log=args.access_log)
     return 0
 
 

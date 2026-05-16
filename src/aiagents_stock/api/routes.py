@@ -25,7 +25,7 @@ PAGES = [
     {"path": "/profit-growth", "key": "profit-growth", "title": "净利增长", "group": "选股板块"},
     {"path": "/value-stock", "key": "value-stock", "title": "低估值策略", "group": "选股板块"},
     {"path": "/sector-strategy", "key": "sector-strategy", "title": "智策板块", "group": "策略研判"},
-    {"path": "/dragon-strategy", "key": "dragon-strategy", "title": "龙头战法", "group": "策略研判"},
+    {"path": "/dragon-strategy", "key": "dragon-strategy", "title": "龙头战法", "group": "选股板块"},
     {"path": "/longhubang", "key": "longhubang", "title": "智瞰龙虎", "group": "策略研判"},
     {"path": "/news-flow", "key": "news-flow", "title": "新闻流量", "group": "策略研判"},
     {"path": "/macro-analysis", "key": "macro-analysis", "title": "宏观分析", "group": "策略研判"},

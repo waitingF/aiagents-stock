@@ -151,6 +151,7 @@ class SectorStrategyEngine:
             try:
                 report_id = self.save_analysis_report(results, data)
                 results["report_id"] = report_id
+                results["saved_to_db"] = True
                 print(f"✓ 分析报告已保存 (ID: {report_id})")
                 # 保存后读取报告详情并回传到结果，用于主页面动态渲染
                 try:
@@ -160,6 +161,8 @@ class SectorStrategyEngine:
                 except Exception as fetch_e:
                     self.logger.warning(f"[智策引擎] 获取保存报告详情失败: {fetch_e}")
             except Exception as e:
+                results["saved_to_db"] = False
+                results["persistence_error"] = str(e)
                 print(f"⚠ 保存分析报告失败: {e}")
                 self.logger.error(f"[智策引擎] 保存分析报告失败: {e}")
             

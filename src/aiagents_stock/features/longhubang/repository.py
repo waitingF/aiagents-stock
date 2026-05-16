@@ -8,7 +8,9 @@ from datetime import datetime
 import json
 import pandas as pd
 import logging
+from typing import Any
 from src.aiagents_stock.core.paths import data_path
+from src.aiagents_stock.core.serialization import to_jsonable
 
 
 class LonghubangDatabase:
@@ -306,9 +308,9 @@ class LonghubangDatabase:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # 如果传入的是字典，转换为JSON字符串
-        if isinstance(analysis_content, dict):
-            analysis_content = json.dumps(analysis_content, ensure_ascii=False, indent=2)
+        if not isinstance(analysis_content, str):
+            analysis_content = json.dumps(to_jsonable(analysis_content), ensure_ascii=False, indent=2)
+        recommended_stocks = to_jsonable(recommended_stocks)
         
         cursor.execute('''
         INSERT INTO longhubang_analysis 
@@ -338,20 +340,22 @@ class LonghubangDatabase:
             limit: 返回数量
             
         Returns:
-            pd.DataFrame: 报告列表
+            list[dict]: 报告列表
         """
         conn = self.get_connection()
-        
-        query = '''
-        SELECT * FROM longhubang_analysis
-        ORDER BY created_at DESC
-        LIMIT ?
-        '''
-        
-        df = pd.read_sql_query(query, conn, params=[limit])
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT * FROM longhubang_analysis
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            ''',
+            (max(1, min(int(limit or 10), 100)),),
+        )
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        reports = [self._parse_analysis_report(dict(zip(columns, row))) for row in cursor.fetchall()]
         conn.close()
-        
-        return df
+        return reports
     
     def get_analysis_report(self, report_id):
         """
@@ -376,30 +380,28 @@ class LonghubangDatabase:
         conn.close()
         
         if row:
-            report = dict(zip(columns, row))
-            
-            # 解析JSON字段
-            if report.get('recommended_stocks'):
-                try:
-                    report['recommended_stocks'] = json.loads(report['recommended_stocks'])
-                except Exception as e:
-                    self.logger.warning(f"推荐股票JSON解析失败: {e}")
-            
-            # 解析analysis_content字段
-            if report.get('analysis_content'):
-                try:
-                    report['analysis_content_parsed'] = json.loads(report['analysis_content'])
-                except json.JSONDecodeError as e:
-                    # 如果不是JSON格式，保持原样
-                    report['analysis_content_parsed'] = None
-                    self.logger.debug(f"analysis_content字段不是有效JSON格式，将保持原始文本格式: {str(e)[:100]}")
-                except Exception as e:
-                    report['analysis_content_parsed'] = None
-                    self.logger.warning(f"analysis_content字段解析时发生未知错误: {str(e)[:100]}")
-            
-            return report
+            return self._parse_analysis_report(dict(zip(columns, row)))
         
         return None
+
+    def _parse_analysis_report(self, report: dict[str, Any]) -> dict[str, Any]:
+        """Parse stored JSON fields for API/front-end display."""
+        if report.get('recommended_stocks'):
+            try:
+                report['recommended_stocks'] = json.loads(report['recommended_stocks'])
+            except Exception as e:
+                self.logger.warning(f"推荐股票JSON解析失败: {e}")
+
+        if report.get('analysis_content'):
+            try:
+                report['analysis_content_parsed'] = json.loads(report['analysis_content'])
+            except json.JSONDecodeError as e:
+                report['analysis_content_parsed'] = None
+                self.logger.debug(f"analysis_content字段不是有效JSON格式，将保持原始文本格式: {str(e)[:100]}")
+            except Exception as e:
+                report['analysis_content_parsed'] = None
+                self.logger.warning(f"analysis_content字段解析时发生未知错误: {str(e)[:100]}")
+        return report
     
     def delete_analysis_report(self, report_id):
         """

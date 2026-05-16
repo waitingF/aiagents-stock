@@ -8,7 +8,9 @@ from datetime import datetime
 import json
 import pandas as pd
 import logging
+from typing import Any
 from src.aiagents_stock.core.paths import data_path
+from src.aiagents_stock.core.serialization import to_jsonable
 
 
 class SectorStrategyDatabase:
@@ -334,9 +336,9 @@ class SectorStrategyDatabase:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # 如果传入的是字典，转换为JSON字符串
-        if isinstance(analysis_content, dict):
-            analysis_content = json.dumps(analysis_content, ensure_ascii=False, indent=2)
+        if not isinstance(analysis_content, str):
+            analysis_content = json.dumps(to_jsonable(analysis_content), ensure_ascii=False, indent=2)
+        recommended_sectors = to_jsonable(recommended_sectors)
         
         cursor.execute('''
         INSERT INTO sector_analysis_reports 
@@ -371,20 +373,22 @@ class SectorStrategyDatabase:
             limit: 返回数量
             
         Returns:
-            pd.DataFrame: 报告列表
+            list[dict]: 报告列表
         """
         conn = self.get_connection()
-        
-        query = '''
-        SELECT * FROM sector_analysis_reports
-        ORDER BY created_at DESC
-        LIMIT ?
-        '''
-        
-        df = pd.read_sql_query(query, conn, params=[limit])
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT * FROM sector_analysis_reports
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            ''',
+            (max(1, min(int(limit or 10), 100)),),
+        )
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        reports = [self._parse_analysis_report(dict(zip(columns, row))) for row in cursor.fetchall()]
         conn.close()
-        
-        return df
+        return reports
     
     def get_analysis_report(self, report_id):
         """
@@ -408,20 +412,20 @@ class SectorStrategyDatabase:
         conn.close()
         
         if row:
-            report = dict(zip(columns, row))
-            
-            # 解析JSON字段
-            try:
-                if report.get('analysis_content'):
-                    report['analysis_content_parsed'] = json.loads(report['analysis_content'])
-                if report.get('recommended_sectors'):
-                    report['recommended_sectors_parsed'] = json.loads(report['recommended_sectors'])
-            except json.JSONDecodeError as e:
-                self.logger.warning(f"[智策板块] JSON解析失败: {e}")
-            
-            return report
+            return self._parse_analysis_report(dict(zip(columns, row)))
         
         return None
+
+    def _parse_analysis_report(self, report: dict[str, Any]) -> dict[str, Any]:
+        """Parse stored JSON fields for API/front-end display."""
+        try:
+            if report.get('analysis_content'):
+                report['analysis_content_parsed'] = json.loads(report['analysis_content'])
+            if report.get('recommended_sectors'):
+                report['recommended_sectors_parsed'] = json.loads(report['recommended_sectors'])
+        except json.JSONDecodeError as e:
+            self.logger.warning(f"[智策板块] JSON解析失败: {e}")
+        return report
     
     def delete_analysis_report(self, report_id):
         """

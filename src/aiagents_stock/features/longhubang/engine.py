@@ -184,18 +184,26 @@ class LonghubangEngine:
                 "final_report": final_report,
                 "timestamp": results["timestamp"]
             }
-            
-            report_id = self.database.save_analysis_report(
-                data_date_range=data_date_range,
-                analysis_content=full_analysis_content,  # 保存完整的结构化数据
-                recommended_stocks=recommended_stocks,
-                summary=final_report.get('summary', ''),
-                full_result=results  # 传入完整结果
-            )
-            results["report_id"] = report_id
-            self.logger.info(f"完整报告已保存 (ID: {report_id})")
-            
+
             results["success"] = True
+            try:
+                report_id = self.database.save_analysis_report(
+                    data_date_range=data_date_range,
+                    analysis_content=full_analysis_content,  # 保存完整的结构化数据
+                    recommended_stocks=recommended_stocks,
+                    summary=final_report.get('summary', ''),
+                    full_result=results  # 传入完整结果
+                )
+                results["report_id"] = report_id
+                results["saved_to_db"] = True
+                saved_report = self.database.get_analysis_report(report_id)
+                if saved_report:
+                    results["saved_report"] = saved_report
+                self.logger.info(f"完整报告已保存 (ID: {report_id})")
+            except Exception as e:
+                results["saved_to_db"] = False
+                results["persistence_error"] = str(e)
+                self.logger.exception(f"保存完整分析报告失败: {e}", exc_info=True)
             
             self.logger.info("=" * 60)
             self.logger.info("✓ 智瞰龙虎综合分析完成！")

@@ -1060,12 +1060,13 @@ function StrategyReportView({ value }) {
 }
 
 function ReportArchive({ value }) {
-  const reports = Array.isArray(value) ? value : [];
+  const reports = Array.isArray(value) ? value : (Array.isArray(value?.records) ? value.records : []);
   if (!reports.length) return <p className="muted">暂无历史报告</p>;
   return (
     <div className="report-archive">
       {reports.slice(0, 20).map((report, index) => {
-        const title = firstValue(report, ["title", "report_title", "report_type", "analysis_type"]) || `报告 ${index + 1}`;
+        const detail = normalizeStoredReportDetail(report);
+        const title = firstValue(report, ["title", "report_title", "report_type", "analysis_type", "data_date_range"]) || `报告 ${index + 1}`;
         const date = firstValue(report, ["report_date", "analysis_date", "created_at", "timestamp", "date"]);
         const summary = firstValue(report, ["summary", "market_outlook", "content", "comprehensive_report", "markdown"]);
         const metrics = [
@@ -1084,13 +1085,29 @@ function ReportArchive({ value }) {
             {summary ? <p>{compactText(summary, 260)}</p> : null}
             <details className="raw-details">
               <summary>查看详情</summary>
-              <StrategyReportView value={report} />
+              <StrategyReportView value={detail} />
             </details>
           </article>
         );
       })}
     </div>
   );
+}
+
+function normalizeStoredReportDetail(report) {
+  const parsed = isPlainObject(report?.analysis_content_parsed) ? report.analysis_content_parsed : null;
+  if (!parsed) return report;
+  return {
+    ...parsed,
+    report_id: report.id || report.report_id || parsed.report_id,
+    saved_report: report,
+    summary: parsed.summary || report.summary,
+    risk_level: parsed.risk_level || report.risk_level,
+    confidence_score: parsed.confidence_score || report.confidence_score,
+    market_outlook: parsed.market_outlook || report.market_outlook,
+    recommended_stocks: parsed.recommended_stocks || report.recommended_stocks,
+    recommended_sectors: parsed.recommended_sectors || report.recommended_sectors_parsed,
+  };
 }
 
 const MAIN_FORCE_METRIC_FIELDS = [
@@ -1914,6 +1931,12 @@ function LonghubangPage() {
   const [form, setForm] = useState({ days: 1 });
   const reports = useAsync(() => request("/longhubang/reports"), []);
   const stats = useAsync(() => request("/longhubang/statistics"), []);
+  useEffect(() => {
+    if (job?.status === "completed") {
+      reports.reload();
+      stats.reload();
+    }
+  }, [job?.id, job?.status]);
   return (
     <Page title="智瞰龙虎" subtitle={spec.subtitle}>
       <StrategyIntro title="智瞰龙虎" spec={spec} />
@@ -1930,8 +1953,20 @@ function LonghubangPage() {
       </section>
       <JobPanel job={job} onClear={clear} renderResult={StrategyReportView} />
       <section className="grid-two">
-        <div className="panel"><h2>历史报告</h2><ReportArchive value={reports.data?.reports} /></div>
-        <div className="panel"><h2>统计排行</h2><DataView value={stats.data} /></div>
+        <div className="panel">
+          <div className="panel-heading">
+            <h2>历史报告</h2>
+            <Button icon={RefreshCw} variant="secondary" onClick={reports.reload}>刷新</Button>
+          </div>
+          <ReportArchive value={reports.data?.reports} />
+        </div>
+        <div className="panel">
+          <div className="panel-heading">
+            <h2>统计排行</h2>
+            <Button icon={RefreshCw} variant="secondary" onClick={stats.reload}>刷新</Button>
+          </div>
+          <DataView value={stats.data} />
+        </div>
       </section>
     </Page>
   );

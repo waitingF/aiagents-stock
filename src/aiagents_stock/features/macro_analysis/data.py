@@ -1,30 +1,63 @@
 """
 宏观分析板块 - 数据采集与标准化
-基于国家统计局官方接口获取核心宏观数据，并补充A股市场快照与候选标的池。
+优先通过 Tushare/AKShare/国家统计局发布稿获取核心宏观数据，并补充A股市场快照与候选标的池。
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 import urllib3
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urljoin
 
 import akshare as ak
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+load_dotenv()
 
 
 class MacroAnalysisDataFetcher:
     """宏观分析板块数据获取器"""
 
     NBS_URL = "https://data.stats.gov.cn/easyquery.htm"
+    CACHE_PATH = Path("data") / "macro_analysis" / "macro_series_cache.json"
+    REQUEST_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+        )
+    }
+
+    CORE_MACRO_KEYS = (
+        "gdp_yoy",
+        "gdp_qoq",
+        "industrial_yoy",
+        "cpi_yoy",
+        "ppi_yoy",
+        "manufacturing_pmi",
+        "non_manufacturing_pmi",
+        "composite_pmi",
+    )
+
+    SOURCE_LABELS = {
+        "cache": "本地缓存",
+        "tushare": "Tushare Pro",
+        "akshare": "AKShare",
+        "stats_release": "国家统计局发布稿",
+        "nbs_easyquery": "国家统计局 easyquery",
+        "tushare_proxy": "Tushare Pro 代理计算",
+    }
 
     # 这里直接绑定统计局指标编码，避免运行时频繁遍历指标树
     NBS_SERIES_CONFIG = {
@@ -136,6 +169,97 @@ class MacroAnalysisDataFetcher:
             "period": "LAST8",
         },
     }
+
+    TUSHARE_SERIES_CONFIG = {
+        "gdp_yoy": {
+            "api": "cn_gdp",
+            "fields": "quarter,gdp,gdp_yoy",
+            "period_col": "quarter",
+            "value_col": "gdp_yoy",
+            "period_type": "quarter",
+        },
+        "cpi_yoy": {
+            "api": "cn_cpi",
+            "fields": "month,nt_yoy",
+            "period_col": "month",
+            "value_col": "nt_yoy",
+            "period_type": "month",
+        },
+        "ppi_yoy": {
+            "api": "cn_ppi",
+            "fields": "month,ppi_yoy",
+            "period_col": "month",
+            "value_col": "ppi_yoy",
+            "period_type": "month",
+        },
+        "manufacturing_pmi": {
+            "api": "cn_pmi",
+            "fields": "month,pmi010000,pmi020100,pmi030000",
+            "period_col": "month",
+            "value_col": "pmi010000",
+            "period_type": "month",
+        },
+        "non_manufacturing_pmi": {
+            "api": "cn_pmi",
+            "fields": "month,pmi010000,pmi020100,pmi030000",
+            "period_col": "month",
+            "value_col": "pmi020100",
+            "period_type": "month",
+        },
+        "composite_pmi": {
+            "api": "cn_pmi",
+            "fields": "month,pmi010000,pmi020100,pmi030000",
+            "period_col": "month",
+            "value_col": "pmi030000",
+            "period_type": "month",
+        },
+    }
+
+    AKSHARE_SERIES_CONFIG = {
+        "gdp_yoy": {
+            "functions": ["macro_china_gdp"],
+            "period_col": "季度",
+            "value_col": "国内生产总值-同比增长",
+            "period_type": "quarter_date",
+        },
+        "industrial_yoy": {
+            "functions": ["macro_china_gyzjz", "macro_china_industrial_production_yoy"],
+            "period_col": "月份",
+            "value_col": "同比增长",
+            "period_type": "month_text",
+        },
+        "cpi_yoy": {
+            "functions": ["macro_china_cpi", "macro_china_cpi_monthly"],
+            "period_col": "月份",
+            "value_col": "全国-同比增长",
+            "period_type": "month_text",
+        },
+        "ppi_yoy": {
+            "functions": ["macro_china_ppi", "macro_china_ppi_yearly"],
+            "period_col": "月份",
+            "value_col": "当月同比增长",
+            "period_type": "month_text",
+        },
+        "manufacturing_pmi": {
+            "functions": ["macro_china_pmi", "macro_china_pmi_yearly"],
+            "period_col": "月份",
+            "value_col": "制造业-指数",
+            "period_type": "month_text",
+        },
+        "non_manufacturing_pmi": {
+            "functions": ["macro_china_pmi"],
+            "period_col": "月份",
+            "value_col": "非制造业-指数",
+            "period_type": "month_text",
+        },
+    }
+
+    STATS_RELEASE_KEYS = {"gdp_qoq", "industrial_yoy"}
+    PROXY_KEYS = {"gdp_qoq"}
+    STATS_RELEASE_LIST_URLS = (
+        "https://www.stats.gov.cn/sj/zxfb/",
+        "https://www.stats.gov.cn/sj/zxfbhjd/",
+    )
 
     A_SHARE_INDEX_CONFIG = {
         "上证指数": "sh000001",
@@ -280,13 +404,23 @@ class MacroAnalysisDataFetcher:
         "顺周期": ["有色金属", "工程机械", "石油石化", "煤炭"],
     }
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        tushare_api: Any = None,
+        cache_path: Optional[Path | str] = None,
+        cache_ttl_hours: int = 24,
+    ) -> None:
         self.logger = logging.getLogger(__name__)
         if not self.logger.handlers:
             logging.basicConfig(
                 level=logging.INFO,
                 format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
             )
+        self._tushare_api = tushare_api
+        self._tushare_api_checked = tushare_api is not None
+        self._tushare_df_cache: Dict[tuple[str, str], pd.DataFrame] = {}
+        self.cache_path = Path(cache_path) if cache_path is not None else self.CACHE_PATH
+        self.cache_ttl_seconds = max(cache_ttl_hours, 0) * 3600
 
     def fetch_all_data(self) -> Dict[str, Any]:
         """获取完整宏观分析所需数据"""
@@ -303,13 +437,14 @@ class MacroAnalysisDataFetcher:
             "errors": [],
         }
 
-        for key, config in self.NBS_SERIES_CONFIG.items():
+        for key in self.CORE_MACRO_KEYS:
+            config = self.NBS_SERIES_CONFIG[key]
             try:
-                series = self._fetch_nbs_series(config)
+                series = self._fetch_macro_series(key, config)
                 result["macro_series"][key] = series
             except Exception as exc:
                 result["errors"].append(f"{config['label']}: {exc}")
-                self.logger.warning("获取统计局指标失败 %s: %s", config["label"], exc)
+                self.logger.warning("获取宏观指标失败 %s: %s", config["label"], exc)
 
         result["macro_snapshot"] = self._build_macro_snapshot(result["macro_series"])
         result["macro_tables"] = self._build_macro_tables(result["macro_series"])
@@ -336,10 +471,433 @@ class MacroAnalysisDataFetcher:
         """提供给AI的候选板块池"""
         return self.SECTOR_STOCK_POOLS
 
+    def _fetch_macro_series(self, key: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        cached = self._read_cached_series(key, allow_stale=False)
+        if cached:
+            return cached
+
+        errors: List[str] = []
+        fetchers = []
+        if key in self.TUSHARE_SERIES_CONFIG:
+            fetchers.append(("tushare", lambda: self._fetch_tushare_series(key, config)))
+        if key in self.AKSHARE_SERIES_CONFIG:
+            fetchers.append(("akshare", lambda: self._fetch_akshare_series(key, config)))
+        if key in self.STATS_RELEASE_KEYS:
+            fetchers.append(("stats_release", lambda: self._fetch_stats_release_series(key, config)))
+        if key in self.PROXY_KEYS:
+            fetchers.append(("tushare_proxy", lambda: self._compute_proxy_series(key, config)))
+
+        for source, fetcher in fetchers:
+            try:
+                series = fetcher()
+                if series:
+                    self._write_cached_series(key, series)
+                    return series
+                errors.append(f"{self.SOURCE_LABELS.get(source, source)}: 无数据")
+            except Exception as exc:
+                errors.append(f"{self.SOURCE_LABELS.get(source, source)}: {exc}")
+                self.logger.warning(
+                    "宏观指标源失败 %s / %s: %s",
+                    config["label"],
+                    self.SOURCE_LABELS.get(source, source),
+                    exc,
+                )
+
+        stale_cached = self._read_cached_series(key, allow_stale=True)
+        if stale_cached:
+            self.logger.warning("远端数据源均失败，使用过期缓存: %s", config["label"])
+            return stale_cached
+
+        raise RuntimeError("; ".join(errors) or "无可用数据源")
+
+    def _read_cached_series(self, key: str, allow_stale: bool) -> List[Dict[str, Any]]:
+        cache_data = self._read_cache_file()
+        payload = cache_data.get(key)
+        if not isinstance(payload, dict):
+            return []
+
+        cached_at = self._parse_cached_at(payload.get("cached_at"))
+        if not cached_at:
+            return []
+        age_seconds = (datetime.now() - cached_at).total_seconds()
+        if not allow_stale and age_seconds > self.cache_ttl_seconds:
+            return []
+
+        rows = payload.get("series")
+        if not isinstance(rows, list):
+            return []
+        result = []
+        for row in rows:
+            if isinstance(row, dict):
+                item = row.copy()
+                item["from_cache"] = True
+                item["cache_age_seconds"] = round(age_seconds, 0)
+                result.append(item)
+        return result
+
+    def _write_cached_series(self, key: str, series: List[Dict[str, Any]]) -> None:
+        if not series:
+            return
+        try:
+            cache_data = self._read_cache_file()
+            rows = []
+            for row in series:
+                item = row.copy()
+                item.pop("from_cache", None)
+                item.pop("cache_age_seconds", None)
+                rows.append(item)
+            cache_data[key] = {
+                "cached_at": datetime.now().isoformat(timespec="seconds"),
+                "series": rows,
+            }
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self.cache_path.write_text(
+                json.dumps(cache_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self.logger.warning("写入宏观数据缓存失败 %s: %s", key, exc)
+
+    def _read_cache_file(self) -> Dict[str, Any]:
+        try:
+            if not self.cache_path.exists():
+                return {}
+            data = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            self.logger.warning("读取宏观数据缓存失败: %s", exc)
+            return {}
+
+    @staticmethod
+    def _parse_cached_at(value: Any) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+
+    def _get_tushare_api(self) -> Any:
+        if self._tushare_api is not None:
+            return self._tushare_api
+        if self._tushare_api_checked:
+            raise RuntimeError("Tushare API 不可用")
+
+        self._tushare_api_checked = True
+        token = os.getenv("TUSHARE_TOKEN", "").strip()
+        if not token:
+            raise RuntimeError("未配置 TUSHARE_TOKEN")
+
+        import tushare as ts
+
+        self._tushare_api = ts.pro_api(token)
+        return self._tushare_api
+
+    def _get_tushare_dataframe(self, api_name: str, fields: str) -> pd.DataFrame:
+        cache_key = (api_name, fields)
+        if cache_key in self._tushare_df_cache:
+            return self._tushare_df_cache[cache_key]
+
+        api = self._get_tushare_api()
+        method = getattr(api, api_name)
+        df = method(fields=fields)
+        if df is None or df.empty:
+            raise RuntimeError(f"{api_name} 返回空数据")
+        self._tushare_df_cache[cache_key] = df
+        return df
+
+    def _fetch_tushare_series(self, key: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        source_config = self.TUSHARE_SERIES_CONFIG[key]
+        df = self._get_tushare_dataframe(source_config["api"], source_config["fields"])
+        return self._series_from_dataframe(
+            df=df,
+            key=key,
+            config=config,
+            period_col=source_config["period_col"],
+            value_col=source_config["value_col"],
+            period_type=source_config["period_type"],
+            source="tushare",
+            is_official=False,
+            is_proxy=False,
+        )
+
+    def _fetch_akshare_series(self, key: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        source_config = self.AKSHARE_SERIES_CONFIG[key]
+        method = None
+        method_name = ""
+        for candidate in source_config["functions"]:
+            method = getattr(ak, candidate, None)
+            if method is not None:
+                method_name = candidate
+                break
+        if method is None:
+            raise RuntimeError("当前 AKShare 版本缺少可用宏观接口")
+
+        df = method()
+        if df is None or df.empty:
+            raise RuntimeError(f"{method_name} 返回空数据")
+        return self._series_from_dataframe(
+            df=df,
+            key=key,
+            config=config,
+            period_col=source_config["period_col"],
+            value_col=source_config["value_col"],
+            period_type=source_config["period_type"],
+            source="akshare",
+            is_official=False,
+            is_proxy=False,
+        )
+
+    def _series_from_dataframe(
+        self,
+        df: pd.DataFrame,
+        key: str,
+        config: Dict[str, Any],
+        period_col: str,
+        value_col: str,
+        period_type: str,
+        source: str,
+        is_official: bool,
+        is_proxy: bool,
+    ) -> List[Dict[str, Any]]:
+        if period_col not in df.columns or value_col not in df.columns:
+            raise RuntimeError(f"缺少字段 {period_col}/{value_col}")
+
+        rows: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            value = self._to_float(row.get(value_col))
+            if value is None:
+                continue
+            period_code, period_label = self._normalize_period(row.get(period_col), period_type)
+            if not period_code:
+                continue
+            rows.append(
+                self._macro_row(
+                    key=key,
+                    config=config,
+                    period_code=period_code,
+                    period_label=period_label,
+                    value_raw=value,
+                    value=value,
+                    source=source,
+                    is_official=is_official,
+                    is_proxy=is_proxy,
+                )
+            )
+
+        rows.sort(key=lambda item: self._period_sort_key(item["period_code"]), reverse=True)
+        return rows[:8]
+
+    def _fetch_stats_release_series(self, key: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        for url in self._find_stats_release_urls(key):
+            try:
+                title, text = self._fetch_stats_release_text(url)
+                row = self._parse_stats_release_row(key, config, title, text, url)
+                if row:
+                    return [row]
+            except Exception as exc:
+                self.logger.warning("解析国家统计局发布稿失败 %s: %s", url, exc)
+        raise RuntimeError("未在国家统计局发布稿中解析到可用数据")
+
+    def _find_stats_release_urls(self, key: str) -> List[str]:
+        if key == "gdp_qoq":
+            keywords = ["国内生产总值", "GDP"]
+        elif key == "industrial_yoy":
+            keywords = ["规模以上工业增加值"]
+        else:
+            return []
+
+        urls: List[str] = []
+        for list_url in self.STATS_RELEASE_LIST_URLS:
+            response = requests.get(
+                list_url,
+                headers=self.REQUEST_HEADERS,
+                timeout=20,
+            )
+            response.raise_for_status()
+            response.encoding = response.apparent_encoding or response.encoding
+            soup = BeautifulSoup(response.text, "html.parser")
+            for link in soup.find_all("a"):
+                title = link.get_text(" ", strip=True)
+                href = str(link.get("href") or "")
+                if not title or not href:
+                    continue
+                if href.lower().endswith((".pdf", ".doc", ".docx", ".xls", ".xlsx")):
+                    continue
+                if not any(keyword in title for keyword in keywords):
+                    continue
+                urls.append(urljoin(list_url, href))
+
+        unique_urls = list(dict.fromkeys(urls))
+        return unique_urls[:12]
+
+    def _fetch_stats_release_text(self, url: str) -> tuple[str, str]:
+        response = requests.get(url, headers=self.REQUEST_HEADERS, timeout=20)
+        response.raise_for_status()
+        response.encoding = response.apparent_encoding or response.encoding
+        soup = BeautifulSoup(response.text, "html.parser")
+        title_node = soup.find("h1") or soup.find("title")
+        title = title_node.get_text(" ", strip=True) if title_node else ""
+        text = soup.get_text(" ", strip=True)
+        return title, text
+
+    def _parse_stats_release_row(
+        self,
+        key: str,
+        config: Dict[str, Any],
+        title: str,
+        text: str,
+        url: str,
+    ) -> Optional[Dict[str, Any]]:
+        if key == "gdp_qoq":
+            period_code, period_label = self._extract_quarter_from_text(title or text)
+            patterns = [
+                r"从环比看，?[^。]{0,80}?国内生产总值增长\s*([+-]?\d+(?:\.\d+)?)%",
+                r"国内生产总值[^。]{0,80}?环比增长\s*([+-]?\d+(?:\.\d+)?)%",
+                r"GDP[^。]{0,80}?环比增长\s*([+-]?\d+(?:\.\d+)?)%",
+            ]
+        elif key == "industrial_yoy":
+            period_code, period_label = self._extract_month_from_text(title or text)
+            patterns = [
+                r"规模以上工业增加值同比实际增长\s*([+-]?\d+(?:\.\d+)?)%",
+                r"规模以上工业增加值同比增长\s*([+-]?\d+(?:\.\d+)?)%",
+                r"规模以上工业增加值增长\s*([+-]?\d+(?:\.\d+)?)%",
+            ]
+        else:
+            return None
+
+        if not period_code:
+            return None
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            value = round(float(match.group(1)), 2)
+            return self._macro_row(
+                key=key,
+                config=config,
+                period_code=period_code,
+                period_label=period_label,
+                value_raw=value,
+                value=value,
+                source="stats_release",
+                is_official=True,
+                is_proxy=False,
+                url=url,
+            )
+        if key == "gdp_qoq":
+            table_value = self._parse_gdp_qoq_table_value(text, period_code)
+            if table_value is not None:
+                return self._macro_row(
+                    key=key,
+                    config=config,
+                    period_code=period_code,
+                    period_label=period_label,
+                    value_raw=table_value,
+                    value=table_value,
+                    source="stats_release",
+                    is_official=True,
+                    is_proxy=False,
+                    url=url,
+                )
+        return None
+
+    @staticmethod
+    def _parse_gdp_qoq_table_value(text: str, period_code: str) -> Optional[float]:
+        match = re.fullmatch(r"(\d{4})Q([1-4])", period_code)
+        if not match:
+            return None
+        year = match.group(1)
+        quarter_index = int(match.group(2)) - 1
+        section_start = text.find("GDP 环比增长速度")
+        if section_start < 0:
+            section_start = text.find("GDP环比增长速度")
+        if section_start < 0:
+            return None
+        section = text[section_start:]
+        row_match = re.search(
+            rf"{year}\s+([+-]?\d+(?:\.\d+)?(?:\s+[+-]?\d+(?:\.\d+)?){{0,3}})",
+            section,
+        )
+        if not row_match:
+            return None
+        values = [float(item) for item in row_match.group(1).split()]
+        if len(values) <= quarter_index:
+            return None
+        return round(values[quarter_index], 2)
+
+    def _compute_proxy_series(self, key: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if key != "gdp_qoq":
+            raise RuntimeError("未配置代理计算")
+
+        df = self._get_tushare_dataframe("cn_gdp", "quarter,gdp")
+        points = []
+        for _, row in df.iterrows():
+            quarter = str(row.get("quarter") or "").strip()
+            value = self._to_float(row.get("gdp"))
+            match = re.fullmatch(r"(\d{4})Q([1-4])", quarter)
+            if not match or value is None:
+                continue
+            points.append(
+                {
+                    "year": int(match.group(1)),
+                    "quarter": int(match.group(2)),
+                    "period_code": quarter,
+                    "period_label": quarter,
+                    "cumulative_gdp": value,
+                }
+            )
+
+        points.sort(key=lambda item: (item["year"], item["quarter"]))
+        previous_cumulative_by_year: Dict[int, float] = {}
+        single_quarter_points = []
+        for point in points:
+            year = point["year"]
+            quarter = point["quarter"]
+            cumulative = point["cumulative_gdp"]
+            if quarter == 1:
+                single_gdp = cumulative
+            else:
+                previous_cumulative = previous_cumulative_by_year.get(year)
+                if previous_cumulative is None:
+                    previous_cumulative_by_year[year] = cumulative
+                    continue
+                single_gdp = cumulative - previous_cumulative
+            previous_cumulative_by_year[year] = cumulative
+            if single_gdp <= 0:
+                continue
+            single_quarter_points.append({**point, "single_gdp": single_gdp})
+
+        rows: List[Dict[str, Any]] = []
+        for index in range(1, len(single_quarter_points)):
+            current = single_quarter_points[index]
+            previous = single_quarter_points[index - 1]
+            if previous["single_gdp"] == 0:
+                continue
+            value = round((current["single_gdp"] / previous["single_gdp"] - 1) * 100, 2)
+            rows.append(
+                self._macro_row(
+                    key=key,
+                    config=config,
+                    period_code=current["period_code"],
+                    period_label=current["period_label"],
+                    value_raw=value,
+                    value=value,
+                    source="tushare_proxy",
+                    is_official=False,
+                    is_proxy=True,
+                    note="由Tushare累计GDP拆分单季名义GDP后计算，非官方季调环比。",
+                )
+            )
+
+        rows.sort(key=lambda item: self._period_sort_key(item["period_code"]), reverse=True)
+        return rows[:8]
+
     def _post_query(self, params: Dict[str, Any]) -> Dict[str, Any]:
         response = requests.post(
             self.NBS_URL,
             params=params,
+            headers=self.REQUEST_HEADERS,
             verify=False,
             allow_redirects=True,
             timeout=30,
@@ -386,19 +944,23 @@ class MacroAnalysisDataFetcher:
             if value in ("", None):
                 continue
             rows.append(
-                {
-                    "series_code": series_code,
-                    "series_label": indicator_nodes.get(series_code, {}).get(
-                        "cname", config["label"]
-                    ),
-                    "period_code": period_code,
-                    "period_label": time_nodes.get(period_code, {}).get(
+                self._macro_row(
+                    key="nbs",
+                    config=config,
+                    period_code=period_code,
+                    period_label=time_nodes.get(period_code, {}).get(
                         "cname", period_code
                     ),
-                    "value_raw": float(value),
-                    "value": self._transform_value(float(value), config),
-                    "unit": config.get("unit", ""),
-                }
+                    value_raw=float(value),
+                    value=self._transform_value(float(value), config),
+                    source="nbs_easyquery",
+                    is_official=True,
+                    is_proxy=False,
+                    series_code=series_code,
+                    series_label=indicator_nodes.get(series_code, {}).get(
+                        "cname", config["label"]
+                    ),
+                )
             )
 
         rows.sort(key=lambda item: item["period_code"], reverse=True)
@@ -409,6 +971,134 @@ class MacroAnalysisDataFetcher:
         if config.get("transform") == "index_minus_100":
             return round(value - 100, 2)
         return round(value, 2)
+
+    def _macro_row(
+        self,
+        key: str,
+        config: Dict[str, Any],
+        period_code: str,
+        period_label: str,
+        value_raw: float,
+        value: float,
+        source: str,
+        is_official: bool,
+        is_proxy: bool,
+        series_code: Optional[str] = None,
+        series_label: Optional[str] = None,
+        url: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        row = {
+            "series_code": series_code or config.get("series_code", key),
+            "series_label": series_label or config["label"],
+            "period_code": period_code,
+            "period_label": period_label,
+            "value_raw": round(float(value_raw), 4),
+            "value": round(float(value), 2),
+            "unit": config.get("unit", ""),
+            "source": source,
+            "source_label": self.SOURCE_LABELS.get(source, source),
+            "is_official": is_official,
+            "is_proxy": is_proxy,
+        }
+        if url:
+            row["source_url"] = url
+        if note:
+            row["note"] = note
+        return row
+
+    def _normalize_period(self, value: Any, period_type: str) -> tuple[str, str]:
+        raw = str(value or "").strip()
+        if not raw:
+            return "", ""
+
+        if period_type == "quarter":
+            match = re.fullmatch(r"(\d{4})Q([1-4])", raw)
+            if match:
+                return raw, raw
+            return self._extract_quarter_from_text(raw)
+
+        if period_type == "quarter_date":
+            match = re.search(r"(\d{4})[-/年](\d{1,2})", raw)
+            if not match:
+                return self._extract_quarter_from_text(raw)
+            year = int(match.group(1))
+            month = int(match.group(2))
+            quarter = min(max((month - 1) // 3 + 1, 1), 4)
+            code = f"{year}Q{quarter}"
+            return code, code
+
+        if period_type in {"month", "month_text"}:
+            return self._extract_month_from_text(raw)
+
+        return raw, raw
+
+    @staticmethod
+    def _period_sort_key(period_code: str) -> int:
+        quarter_match = re.fullmatch(r"(\d{4})Q([1-4])", str(period_code))
+        if quarter_match:
+            return int(quarter_match.group(1)) * 10 + int(quarter_match.group(2))
+
+        month_match = re.fullmatch(r"(\d{4})(\d{2})", str(period_code))
+        if month_match:
+            return int(month_match.group(1)) * 100 + int(month_match.group(2))
+
+        digits = re.sub(r"\D", "", str(period_code))
+        return int(digits[:8] or 0)
+
+    @staticmethod
+    def _extract_quarter_from_text(text: str) -> tuple[str, str]:
+        quarter_map = {
+            "一": 1,
+            "二": 2,
+            "三": 3,
+            "四": 4,
+            "1": 1,
+            "2": 2,
+            "3": 3,
+            "4": 4,
+        }
+        match = re.search(r"(\d{4})年(?:第?([一二三四1-4])季度|([一二三四1-4])季度)", text)
+        if match:
+            year = int(match.group(1))
+            quarter_token = match.group(2) or match.group(3)
+            quarter = quarter_map[quarter_token]
+            code = f"{year}Q{quarter}"
+            return code, code
+
+        match = re.search(r"(\d{4})Q([1-4])", text)
+        if match:
+            code = f"{match.group(1)}Q{match.group(2)}"
+            return code, code
+        return "", ""
+
+    @staticmethod
+    def _extract_month_from_text(text: str) -> tuple[str, str]:
+        range_match = re.search(r"(\d{4})年(\d{1,2})\s*[—\-~至]\s*(\d{1,2})月份?", text)
+        if range_match:
+            year = int(range_match.group(1))
+            start_month = int(range_match.group(2))
+            end_month = int(range_match.group(3))
+            return f"{year}{end_month:02d}", f"{year}年{start_month}-{end_month}月"
+
+        match = re.search(r"(\d{4})年(\d{1,2})月份?", text)
+        if match:
+            year = int(match.group(1))
+            month = int(match.group(2))
+            return f"{year}{month:02d}", f"{year}年{month:02d}月"
+
+        match = re.search(r"(\d{4})[-/](\d{1,2})(?:[-/]\d{1,2})?", text)
+        if match:
+            year = int(match.group(1))
+            month = int(match.group(2))
+            return f"{year}{month:02d}", f"{year}年{month:02d}月"
+
+        match = re.fullmatch(r"(\d{4})(\d{2})", text)
+        if match:
+            year = int(match.group(1))
+            month = int(match.group(2))
+            return f"{year}{month:02d}", f"{year}年{month:02d}月"
+        return "", ""
 
     def _build_macro_snapshot(self, macro_series: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
         snapshot: Dict[str, Any] = {}
@@ -430,6 +1120,12 @@ class MacroAnalysisDataFetcher:
                 "previous_value": previous["value"] if previous else None,
                 "previous_period_label": previous["period_label"] if previous else None,
                 "change": change,
+                "source": latest.get("source", ""),
+                "source_label": latest.get("source_label", ""),
+                "is_official": latest.get("is_official", False),
+                "is_proxy": latest.get("is_proxy", False),
+                "from_cache": latest.get("from_cache", False),
+                "note": latest.get("note", ""),
             }
         return snapshot
 
@@ -445,6 +1141,8 @@ class MacroAnalysisDataFetcher:
                         "数值": item["value"],
                         "原始值": item["value_raw"],
                         "单位": item["unit"] or "-",
+                        "来源": item.get("source_label", "-"),
+                        "代理值": "是" if item.get("is_proxy") else "否",
                     }
                     for item in series
                 ]
@@ -809,8 +1507,8 @@ class MacroAnalysisDataFetcher:
 
     def build_prompt_context(self, data: Dict[str, Any]) -> str:
         snapshot = data.get("macro_snapshot", {})
-        lines = ["===== 当前国内宏观数据快照（国家统计局） ====="]
-        for key in self.NBS_SERIES_CONFIG.keys():
+        lines = ["===== 当前国内宏观数据快照（多源校验） ====="]
+        for key in self.CORE_MACRO_KEYS:
             item = snapshot.get(key)
             if not item:
                 continue
@@ -819,9 +1517,14 @@ class MacroAnalysisDataFetcher:
                 if item.get("change") is not None
                 else ""
             )
+            source_label = item.get("source_label") or "未知来源"
+            proxy_label = "，代理值" if item.get("is_proxy") else ""
             lines.append(
-                f"- {item['label']}: {item['value']}{item['unit']} ({item['period_label']}){change_str}"
+                f"- {item['label']}: {item['value']}{item['unit']} "
+                f"({item['period_label']}，来源：{source_label}{proxy_label}){change_str}"
             )
+            if item.get("note"):
+                lines.append(f"  口径说明：{item['note']}")
 
         lines.append("")
         lines.append("===== A股指数快照 =====")

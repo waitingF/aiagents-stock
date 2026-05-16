@@ -34,7 +34,7 @@ class MacroAnalysisEngine:
 
         try:
             if progress_callback:
-                progress_callback(5, "正在获取国家统计局宏观数据...")
+                progress_callback(5, "正在获取多源宏观数据...")
 
             raw_data = self.data_fetcher.fetch_all_data()
             results["raw_data"] = raw_data

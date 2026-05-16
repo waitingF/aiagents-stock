@@ -6,12 +6,12 @@ import csv
 import json
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import src.aiagents_stock.core.config as config
+from src.aiagents_stock.core.parallel import ParallelTask, iter_parallel_results
 from src.aiagents_stock.core.paths import data_path
 from src.aiagents_stock.features.stock_analysis.service import (
     analyze_single_stock_for_batch,
@@ -533,29 +533,26 @@ class StockPoolManager:
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         results = []
         failed = []
-        completed = 0
         total = len(codes)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_code = {
-                executor.submit(self.analyze_single_stock, code, period, selected_agents): code
-                for code in codes
-            }
-            for future in as_completed(future_to_code):
-                code = future_to_code[future]
-                completed += 1
-                try:
-                    result = future.result()
-                    if result.get("success"):
-                        results.append({"code": code, "result": result, "pool_items": targets[code]})
-                        status = "success"
-                    else:
-                        failed.append({"code": code, "error": result.get("error", "未知错误")})
-                        status = "failed"
-                except Exception as exc:
-                    failed.append({"code": code, "error": str(exc)})
-                    status = "error"
-                if progress_callback:
-                    progress_callback(completed, total, code, status)
+        tasks = [
+            ParallelTask(code, self.analyze_single_stock, args=(code, period, selected_agents))
+            for code in codes
+        ]
+        for task_result in iter_parallel_results(tasks, max_workers=max_workers):
+            code = task_result.key
+            if task_result.error is not None:
+                failed.append({"code": code, "error": str(task_result.error)})
+                status = "error"
+            else:
+                result = task_result.value
+                if result.get("success"):
+                    results.append({"code": code, "result": result, "pool_items": targets[code]})
+                    status = "success"
+                else:
+                    failed.append({"code": code, "error": result.get("error", "未知错误")})
+                    status = "failed"
+            if progress_callback:
+                progress_callback(task_result.completed, total, code, status)
         return results, failed
 
     def _build_enabled_analysts(self, selected_agents: Optional[List[str]]) -> Dict[str, bool]:

@@ -1,8 +1,8 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from typing import Any, Callable, Dict, List, Tuple
 
 import src.aiagents_stock.core.config as config
+from src.aiagents_stock.core.parallel import ParallelTask, run_parallel_tasks
 from src.aiagents_stock.integrations.llm.client import DeepSeekClient
 
 class StockAnalysisAgents:
@@ -460,24 +460,14 @@ class StockAnalysisAgents:
         if enabled_analysts.get('news', False):
             task_specs.append(("news", self.news_analyst_agent, (stock_info, news_data)))
 
-        completed_results: Dict[str, Dict[str, Any]] = {}
         max_workers = max(1, min(len(task_specs), analyst_max_workers))
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_key = {
-                executor.submit(agent_func, *agent_args): agent_key
+        agents_results = run_parallel_tasks(
+            [
+                ParallelTask(agent_key, agent_func, args=agent_args)
                 for agent_key, agent_func, agent_args in task_specs
-            }
-
-            for future in as_completed(future_to_key):
-                agent_key = future_to_key[future]
-                completed_results[agent_key] = future.result()
-
-        # Keep the public result order stable for Streamlit tabs and saved reports.
-        agents_results = {
-            agent_key: completed_results[agent_key]
-            for agent_key, _, _ in task_specs
-        }
+            ],
+            max_workers=max_workers,
+        )
         
         print("✅ 所有已选择的分析师完成分析")
         print("=" * 50)

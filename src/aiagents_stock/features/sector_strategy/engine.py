@@ -6,6 +6,7 @@
 from src.aiagents_stock.features.sector_strategy.agents import SectorStrategyAgents
 from src.aiagents_stock.features.sector_strategy.repository import SectorStrategyDatabase
 from src.aiagents_stock.integrations.llm.client import DeepSeekClient
+from src.aiagents_stock.core.parallel import ParallelTask, run_parallel_tasks
 from typing import Dict, Any
 import time
 import json
@@ -123,42 +124,7 @@ class SectorStrategyEngine:
             print("\n[阶段1] AI智能体分析集群工作中...")
             print("-" * 60)
             
-            agents_results = {}
-            
-            # 宏观策略师
-            print("1/4 宏观策略师...")
-            macro_result = self.agents.macro_strategist_agent(
-                market_data=data.get("market_overview", {}),
-                news_data=data.get("news", [])
-            )
-            agents_results["macro"] = macro_result
-            
-            # 板块诊断师
-            print("2/4 板块诊断师...")
-            sector_result = self.agents.sector_diagnostician_agent(
-                sectors_data=data.get("sectors", {}),
-                concepts_data=data.get("concepts", {}),
-                market_data=data.get("market_overview", {})
-            )
-            agents_results["sector"] = sector_result
-            
-            # 资金流向分析师
-            print("3/4 资金流向分析师...")
-            fund_result = self.agents.fund_flow_analyst_agent(
-                fund_flow_data=data.get("sector_fund_flow", {}),
-                north_flow_data=data.get("north_flow", {}),
-                sectors_data=data.get("sectors", {})
-            )
-            agents_results["fund"] = fund_result
-            
-            # 市场情绪解码员
-            print("4/4 市场情绪解码员...")
-            sentiment_result = self.agents.market_sentiment_decoder_agent(
-                market_data=data.get("market_overview", {}),
-                sectors_data=data.get("sectors", {}),
-                concepts_data=data.get("concepts", {})
-            )
-            agents_results["sentiment"] = sentiment_result
+            agents_results = self._run_agent_analyses_parallel(data)
             
             results["agents_analysis"] = agents_results
             print("\n✓ 所有智能体分析完成")
@@ -208,6 +174,49 @@ class SectorStrategyEngine:
             results["error"] = str(e)
         
         return results
+
+    def _run_agent_analyses_parallel(self, data: Dict) -> Dict[str, Any]:
+        """Run the four independent sector analyst agents concurrently."""
+        print("  Submitting 4 analyst tasks in parallel (max_workers=4)...")
+
+        tasks = [
+            ParallelTask(
+                "macro",
+                SectorStrategyAgents(model=self.model).macro_strategist_agent,
+                kwargs={
+                    "market_data": data.get("market_overview", {}),
+                    "news_data": data.get("news", []),
+                },
+            ),
+            ParallelTask(
+                "sector",
+                SectorStrategyAgents(model=self.model).sector_diagnostician_agent,
+                kwargs={
+                    "sectors_data": data.get("sectors", {}),
+                    "concepts_data": data.get("concepts", {}),
+                    "market_data": data.get("market_overview", {}),
+                },
+            ),
+            ParallelTask(
+                "fund",
+                SectorStrategyAgents(model=self.model).fund_flow_analyst_agent,
+                kwargs={
+                    "fund_flow_data": data.get("sector_fund_flow", {}),
+                    "north_flow_data": data.get("north_flow", {}),
+                    "sectors_data": data.get("sectors", {}),
+                },
+            ),
+            ParallelTask(
+                "sentiment",
+                SectorStrategyAgents(model=self.model).market_sentiment_decoder_agent,
+                kwargs={
+                    "market_data": data.get("market_overview", {}),
+                    "sectors_data": data.get("sectors", {}),
+                    "concepts_data": data.get("concepts", {}),
+                },
+            ),
+        ]
+        return run_parallel_tasks(tasks, max_workers=4)
     
     def _conduct_comprehensive_discussion(self, agents_results: Dict) -> str:
         """
@@ -605,4 +614,3 @@ if __name__ == "__main__":
     # 注意：这只是测试框架，实际运行需要真实数据和API key
     # results = engine.run_comprehensive_analysis(test_data)
     # print(f"\n分析结果: {results.get('success')}")
-

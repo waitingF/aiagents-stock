@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from src.aiagents_stock.api.jobs import job_manager
 from src.aiagents_stock.api.serialization import to_jsonable
 from src.aiagents_stock.core import config
+from src.aiagents_stock.core.parallel import ParallelTask, iter_parallel_results
 
 
 router = APIRouter(prefix="/api")
@@ -166,8 +167,6 @@ def _run_stock_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _run_batch_stock_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     from src.aiagents_stock.features.stock_analysis.service import (
         analyze_single_stock_for_batch,
         parse_stock_list,
@@ -182,27 +181,27 @@ def _run_batch_stock_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     model = payload.get("model") or config.DEFAULT_MODEL_NAME
     results = []
     failed = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_code = {
-            executor.submit(
-                analyze_single_stock_for_batch,
-                code,
-                period,
-                analysts,
-                model,
-            ): code
-            for code in codes
-        }
-        for future in as_completed(future_to_code):
-            code = future_to_code[future]
+    tasks = [
+        ParallelTask(
+            code,
+            analyze_single_stock_for_batch,
+            args=(code, period, analysts, model),
+        )
+        for code in codes
+    ]
+    for task_result in iter_parallel_results(tasks, max_workers=max_workers):
+        code = task_result.key
+        if task_result.error is None:
             try:
-                result = future.result()
+                result = task_result.value
                 if result.get("success"):
                     results.append(result)
                 else:
                     failed.append({"code": code, "error": result.get("error", "分析失败")})
             except Exception as exc:
                 failed.append({"code": code, "error": str(exc)})
+        else:
+            failed.append({"code": code, "error": str(task_result.error)})
     return {
         "success": bool(results),
         "total": len(codes),

@@ -6,10 +6,10 @@ reused by batch jobs, CLI commands, tests, and future API entrypoints.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.aiagents_stock.core import config
+from src.aiagents_stock.core.parallel import ParallelTask, run_parallel_tasks
 from src.aiagents_stock.features.stock_analysis.agents import StockAnalysisAgents
 from src.aiagents_stock.features.stock_analysis.data import StockDataFetcher
 from src.aiagents_stock.features.stock_analysis.repository import db
@@ -139,21 +139,15 @@ def _fetch_supplemental_analysis_data(
         "news_data": None,
         "risk_data": None,
     }
-    failure_handlers = {task_key: failure_handler for task_key, _, failure_handler in task_specs}
     max_workers = max(1, min(len(task_specs), data_fetch_max_workers))
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_key = {
-            executor.submit(fetch_func): task_key
-            for task_key, fetch_func, _ in task_specs
-        }
-
-        for future in as_completed(future_to_key):
-            task_key = future_to_key[future]
-            try:
-                results[task_key] = future.result()
-            except Exception as exc:
-                results[task_key] = failure_handlers[task_key](exc)
+    task_results = run_parallel_tasks(
+        [
+            ParallelTask(task_key, fetch_func, on_error=failure_handler)
+            for task_key, fetch_func, failure_handler in task_specs
+        ],
+        max_workers=max_workers,
+    )
+    results.update(task_results)
 
     return (
         results["financial_data"],

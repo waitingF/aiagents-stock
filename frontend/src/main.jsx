@@ -132,7 +132,7 @@ function App() {
             <Route path="/small-cap" element={<SelectorPage key="small-cap" selectorKey="small-cap" title="小市值策略" />} />
             <Route path="/profit-growth" element={<SelectorPage key="profit-growth" selectorKey="profit-growth" title="净利增长" monitorPath="/selectors/profit-growth/monitor" />} />
             <Route path="/value-stock" element={<SelectorPage key="value-stock" selectorKey="value-stock" title="低估值策略" defaultTopN={10} />} />
-            <Route path="/sector-strategy" element={<ReportJobPage title="智策板块" runPath="/sector-strategy/run" reportsPath="/sector-strategy/reports" jobKey="strategy:sector-strategy" strategyKey="sector-strategy" />} />
+            <Route path="/sector-strategy" element={<SectorStrategyPage />} />
             <Route path="/dragon-strategy" element={<DragonStrategyPage />} />
             <Route path="/longhubang" element={<LonghubangPage />} />
             <Route path="/news-flow" element={<NewsFlowPage />} />
@@ -413,6 +413,34 @@ const FIELD_LABELS = {
   filtered_stocks: "筛选后数量",
   total_youzi: "席位数",
   total_net_inflow: "净流入合计",
+  total_net_mf_amount: "净流入合计",
+  total_main_net_amount: "主力净流入合计",
+  positive_net_mf_amount: "正流入合计",
+  top5_concentration: "TOP5集中度",
+  sector_count: "板块数",
+  positive_sector_count: "净流入板块数",
+  negative_sector_count: "净流出板块数",
+  trade_days_count: "交易日数",
+  range_type: "时间范围",
+  start_date: "开始日期",
+  end_date: "结束日期",
+  sector_source: "板块来源",
+  sector_level: "板块层级",
+  sector_level_name: "板块层级",
+  sector_rank: "净流入排行",
+  outflow_rank: "净流出排行",
+  sector_code: "板块代码",
+  sector_name: "板块名称",
+  net_mf_amount: "净流入",
+  main_net_amount: "主力净流入",
+  super_large_net_amount: "特大单净流入",
+  large_net_amount: "大单净流入",
+  medium_net_amount: "中单净流入",
+  small_net_amount: "小单净流入",
+  positive_stock_count: "净流入个股数",
+  negative_stock_count: "净流出个股数",
+  top_stocks: "板块内个股",
+  ts_code: "股票代码",
   final_recommendations: "最终推荐",
   recommended_stocks_count: "推荐数",
   fetch_time: "抓取时间",
@@ -473,6 +501,16 @@ const VALUE_LABELS = {
   trends: "趋势跟踪",
   backtest: "回测",
   sector: "板块",
+  L1: "申万一级",
+  L2: "申万二级",
+  L3: "申万三级",
+  "1w": "最近一周",
+  "2w": "最近两周",
+  "1m": "最近一月",
+  "2m": "最近两月",
+  "3m": "最近三月",
+  day: "某天",
+  custom: "自定义区间",
   longhubang: "智瞰龙虎",
   quick: "快速分析",
   full: "完整分析",
@@ -1876,6 +1914,317 @@ function ReportJobPage({ title, runPath, reportsPath, jobKey, strategyKey }) {
       </section>
     </Page>
   );
+}
+
+function SectorStrategyPage() {
+  const [tab, setTab] = useState("research");
+  const spec = STRATEGY_RESEARCH_SPECS["sector-strategy"];
+  return (
+    <Page title="智策板块" subtitle={spec.subtitle}>
+      <div className="segmented">
+        <button className={tab === "research" ? "active" : ""} onClick={() => setTab("research")}>综合研判</button>
+        <button className={tab === "fund-flow" ? "active" : ""} onClick={() => setTab("fund-flow")}>板块资金流</button>
+      </div>
+      {tab === "research" ? <SectorResearchPanel /> : <SectorFundFlowPanel />}
+    </Page>
+  );
+}
+
+function SectorResearchPanel() {
+  const spec = STRATEGY_RESEARCH_SPECS["sector-strategy"];
+  const { job, start, clear } = useJob("strategy:sector-strategy");
+  const reports = useAsync(() => request("/sector-strategy/reports"), []);
+  useEffect(() => {
+    if (job?.status === "completed") reports.reload();
+  }, [job?.id, job?.status]);
+  return (
+    <>
+      <StrategyIntro title="智策板块" spec={spec} />
+      <section className="panel">
+        <Button icon={Play} onClick={() => start("/sector-strategy/run", {})}>开始分析</Button>
+      </section>
+      <JobPanel job={job} onClear={clear} renderResult={StrategyReportView} />
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>历史报告</h2>
+          <Button icon={RefreshCw} variant="secondary" onClick={reports.reload}>刷新</Button>
+        </div>
+        <ReportArchive value={reports.data?.reports} />
+      </section>
+    </>
+  );
+}
+
+const SECTOR_FUND_FLOW_DEFAULT_FORM = {
+  range_type: "1m",
+  trade_date: "",
+  start_date: "",
+  end_date: "",
+  sector_level: "L2",
+  top_sectors: 20,
+  top_stocks: 10,
+  max_workers: 4,
+};
+
+function SectorFundFlowPanel() {
+  const [form, setForm] = useState(SECTOR_FUND_FLOW_DEFAULT_FORM);
+  const { job, start, clear } = useJob("strategy:sector-fund-flow");
+  const reports = useAsync(() => request("/sector-strategy/fund-flow/reports"), []);
+  useEffect(() => {
+    if (job?.status === "completed") reports.reload();
+  }, [job?.id, job?.status]);
+
+  const run = () => {
+    start("/sector-strategy/fund-flow/run", {
+      ...form,
+      top_sectors: Number(form.top_sectors) || 20,
+      top_stocks: Number(form.top_stocks) || 10,
+      max_workers: Number(form.max_workers) || 4,
+    });
+  };
+
+  return (
+    <>
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>板块资金流参数</h2>
+        </div>
+        <div className="form-grid">
+          <Field label="时间范围">
+            <select value={form.range_type} onChange={(e) => setForm({ ...form, range_type: e.target.value })}>
+              <option value="1w">最近一周</option>
+              <option value="2w">最近两周</option>
+              <option value="1m">最近一月</option>
+              <option value="2m">最近两月</option>
+              <option value="3m">最近三月</option>
+              <option value="day">某天</option>
+              <option value="custom">自定义区间</option>
+            </select>
+          </Field>
+          <Field label="板块层级">
+            <select value={form.sector_level} onChange={(e) => setForm({ ...form, sector_level: e.target.value })}>
+              <option value="L1">申万一级</option>
+              <option value="L2">申万二级</option>
+              <option value="L3">申万三级</option>
+            </select>
+          </Field>
+          <Field label="并发数">
+            <input type="number" min="1" max="8" value={form.max_workers} onChange={(e) => setForm({ ...form, max_workers: Number(e.target.value) || 4 })} />
+          </Field>
+          {form.range_type === "day" ? (
+            <Field label="交易日期">
+              <input placeholder="YYYYMMDD" value={form.trade_date} onChange={(e) => setForm({ ...form, trade_date: e.target.value })} />
+            </Field>
+          ) : null}
+          {form.range_type === "custom" ? (
+            <>
+              <Field label="开始日期">
+                <input placeholder="YYYYMMDD" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} />
+              </Field>
+              <Field label="结束日期">
+                <input placeholder="YYYYMMDD" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} />
+              </Field>
+            </>
+          ) : null}
+          <Field label="TOP板块">
+            <input type="number" min="1" max="100" value={form.top_sectors} onChange={(e) => setForm({ ...form, top_sectors: Number(e.target.value) || 20 })} />
+          </Field>
+          <Field label="板块内TOP个股">
+            <input type="number" min="1" max="50" value={form.top_stocks} onChange={(e) => setForm({ ...form, top_stocks: Number(e.target.value) || 10 })} />
+          </Field>
+        </div>
+        <Button icon={Play} onClick={run}>运行板块资金流</Button>
+      </section>
+      <JobPanel job={job} onClear={clear} renderResult={SectorFundFlowResultView} />
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>资金流历史</h2>
+          <Button icon={RefreshCw} variant="secondary" onClick={reports.reload}>刷新</Button>
+        </div>
+        <SectorFundFlowArchive value={reports.data?.reports} />
+      </section>
+    </>
+  );
+}
+
+function SectorFundFlowResultView({ value }) {
+  if (!value) return <p className="muted">暂无报告</p>;
+  if (!isPlainObject(value)) return <DataView value={value} />;
+  const result = isPlainObject(value.result) ? value.result : value;
+  const summary = result.summary || {};
+  const range = result.range || {};
+  const metrics = [
+    { label: "报告编号", value: result.report_id },
+    { label: "时间范围", value: sectorRangeLabel(range) },
+    { label: "板块层级", value: result.sector_level_name || formatCell(result.sector_level) },
+    { label: "交易日数", value: summary.trade_days_count },
+    { label: "净流入合计", value: formatWanMoney(summary.total_net_mf_amount) },
+    { label: "主力净流入", value: formatWanMoney(summary.total_main_net_amount) },
+    { label: "净流入板块", value: summary.positive_sector_count },
+    { label: "TOP5集中度", value: formatPercentValue(summary.top5_concentration) },
+  ];
+  return (
+    <div className="report-view">
+      {result.error ? <p className="error-text">{result.error}</p> : null}
+      <MetricStrip items={metrics} />
+      <section className="report-section">
+        <h3>板块净流入排行</h3>
+        <SectorFlowTable rows={result.sector_rank || []} stockMode="inflow" />
+      </section>
+      <section className="report-section">
+        <h3>板块净流出排行</h3>
+        <SectorFlowTable rows={result.outflow_rank || []} stockMode="outflow" />
+      </section>
+      <details className="raw-details">
+        <summary>查看原始数据</summary>
+        <JsonBlock value={result} />
+      </details>
+    </div>
+  );
+}
+
+function SectorFlowTable({ rows, stockMode }) {
+  const data = Array.isArray(rows) ? rows : [];
+  if (!data.length) return <p className="muted">暂无记录</p>;
+  return (
+    <div className="table-wrap sector-flow-table">
+      <table>
+        <thead>
+          <tr>
+            <th>排名</th>
+            <th>板块</th>
+            <th>净流入</th>
+            <th>主力净流入</th>
+            <th>特大单</th>
+            <th>大单</th>
+            <th>个股数</th>
+            <th>净流入个股</th>
+            <th>板块内个股</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((row, index) => (
+            <tr key={row.sector_code || row.sector_name || index}>
+              <td>{row.rank || index + 1}</td>
+              <td>
+                <strong>{row.sector_name}</strong>
+                <span className="muted table-subtext">{row.sector_code}</span>
+              </td>
+              <td className={amountClass(row.net_mf_amount)}>{formatFundAmount(row.net_mf_amount)}</td>
+              <td className={amountClass(row.main_net_amount)}>{formatFundAmount(row.main_net_amount)}</td>
+              <td className={amountClass(row.super_large_net_amount)}>{formatFundAmount(row.super_large_net_amount)}</td>
+              <td className={amountClass(row.large_net_amount)}>{formatFundAmount(row.large_net_amount)}</td>
+              <td>{row.stock_count}</td>
+              <td>{row.positive_stock_count}</td>
+              <td>
+                <details className="inline-details">
+                  <summary>查看</summary>
+                  <SectorStockFlowTable rows={row.top_stocks || []} mode={stockMode} />
+                </details>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SectorStockFlowTable({ rows }) {
+  const data = Array.isArray(rows) ? rows : [];
+  if (!data.length) return <p className="muted">暂无个股</p>;
+  return (
+    <table className="nested-table">
+      <thead>
+        <tr>
+          <th>代码</th>
+          <th>名称</th>
+          <th>净流入</th>
+          <th>主力净流入</th>
+          <th>涨跌幅</th>
+          <th>收盘价</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.map((row) => (
+          <tr key={row.ts_code}>
+            <td>{row.ts_code}</td>
+            <td>{row.stock_name}</td>
+            <td className={amountClass(row.net_mf_amount)}>{formatFundAmount(row.net_mf_amount)}</td>
+            <td className={amountClass(row.main_net_amount)}>{formatFundAmount(row.main_net_amount)}</td>
+            <td>{formatPercentValue(row.pct_chg)}</td>
+            <td>{formatNumber(row.close)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function SectorFundFlowArchive({ value }) {
+  const reports = Array.isArray(value) ? value : [];
+  if (!reports.length) return <p className="muted">暂无历史报告</p>;
+  return (
+    <div className="report-archive">
+      {reports.slice(0, 20).map((report, index) => {
+        const result = report.result || {};
+        const summary = report.summary || result.summary || {};
+        return (
+          <article key={report.id || index} className="report-card">
+            <div className="report-card-head">
+              <h3>{sectorRangeLabel(result.range || report)} · {formatCell(report.sector_level)}</h3>
+              <span>{report.created_at || report.report_date}</span>
+            </div>
+            <MetricStrip items={[
+              { label: "编号", value: report.id },
+              { label: "净流入合计", value: formatWanMoney(summary.total_net_mf_amount) },
+              { label: "板块数", value: summary.sector_count },
+              { label: "交易日数", value: summary.trade_days_count },
+            ]} />
+            <details className="raw-details">
+              <summary>查看详情</summary>
+              <SectorFundFlowResultView value={result} />
+            </details>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function sectorRangeLabel(range) {
+  const typeLabel = range.label || formatCell(range.type || range.range_type || "");
+  const start = formatCompactDate(range.start_date);
+  const end = formatCompactDate(range.end_date);
+  if (start && end && start !== end) return `${typeLabel}（${start} 至 ${end}）`;
+  return start ? `${typeLabel}（${start}）` : typeLabel;
+}
+
+function formatCompactDate(value) {
+  const text = String(value || "").replace(/-/g, "");
+  if (!/^\d{8}$/.test(text)) return value || "";
+  return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}`;
+}
+
+function formatWanMoney(value) {
+  if (!hasDisplayValue(value)) return "";
+  const number = Number(String(value).replace(/,/g, ""));
+  if (!Number.isFinite(number)) return String(value);
+  const abs = Math.abs(number);
+  if (abs >= 10000) return `${formatNumber(number / 10000)}亿`;
+  return `${formatNumber(number)}万`;
+}
+
+function formatFundAmount(value) {
+  const number = Number(String(value ?? "").replace(/,/g, ""));
+  if (!Number.isFinite(number)) return "";
+  return `${number > 0 ? "+" : ""}${formatWanMoney(number)}`;
+}
+
+function amountClass(value) {
+  const number = Number(String(value ?? "").replace(/,/g, ""));
+  if (!Number.isFinite(number) || number === 0) return "";
+  return number > 0 ? "positive-text" : "negative-text";
 }
 
 function DragonStrategyPage() {

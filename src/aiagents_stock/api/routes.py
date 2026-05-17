@@ -829,6 +829,45 @@ def _run_sector_strategy(payload: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+@router.post("/sector-strategy/fund-flow/run")
+def sector_strategy_fund_flow_run(body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return _job_response("sector-strategy-fund-flow", _run_sector_strategy_fund_flow, _payload(body))
+
+
+def _run_sector_strategy_fund_flow(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from src.aiagents_stock.features.sector_strategy.fund_flow import SectorFundFlowAnalyzer
+
+    return SectorFundFlowAnalyzer().analyze(
+        range_type=str(payload.get("range_type") or "1m"),
+        start_date=payload.get("start_date") or None,
+        end_date=payload.get("end_date") or None,
+        trade_date=payload.get("trade_date") or None,
+        sector_level=str(payload.get("sector_level") or "L2"),
+        sector_source=str(payload.get("sector_source") or "SW2021"),
+        top_sectors=max(1, min(_int(payload.get("top_sectors"), 20), 100)),
+        top_stocks=max(1, min(_int(payload.get("top_stocks"), 10), 50)),
+        max_workers=max(1, min(_int(payload.get("max_workers"), 4), 8)),
+        force_refresh=_bool(payload.get("force_refresh"), False),
+    )
+
+
+@router.get("/sector-strategy/fund-flow/reports")
+def sector_strategy_fund_flow_reports(limit: int = 20) -> Dict[str, Any]:
+    from src.aiagents_stock.features.sector_strategy.fund_flow_repository import SectorFundFlowRepository
+
+    return {"reports": to_jsonable(SectorFundFlowRepository().list_reports(limit=limit))}
+
+
+@router.get("/sector-strategy/fund-flow/reports/{report_id}")
+def sector_strategy_fund_flow_report(report_id: int) -> Dict[str, Any]:
+    from src.aiagents_stock.features.sector_strategy.fund_flow_repository import SectorFundFlowRepository
+
+    report = SectorFundFlowRepository().get_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return {"report": to_jsonable(report)}
+
+
 @router.get("/sector-strategy/reports")
 def sector_strategy_reports(limit: int = 20) -> Dict[str, Any]:
     from src.aiagents_stock.features.sector_strategy.engine import SectorStrategyEngine

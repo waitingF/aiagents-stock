@@ -96,6 +96,42 @@ textarea {
   overflow-x: hidden;
 }
 
+.scroll-top-button {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #0f6fbf;
+  border-radius: 8px;
+  background: #1677c8;
+  color: #ffffff;
+  box-shadow: 0 14px 30px rgba(23, 32, 42, 0.18);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+  transition: opacity 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+
+.scroll-top-button.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.scroll-top-button:hover {
+  background: #1165aa;
+}
+
+.scroll-top-button:focus-visible {
+  outline: 3px solid rgba(40, 179, 166, 0.35);
+  outline-offset: 3px;
+}
+
 .page {
   max-width: 1480px;
   margin: 0 auto;
@@ -870,5 +906,12 @@ th {
 
   .check-grid {
     grid-template-columns: 1fr;
+  }
+
+  .scroll-top-button {
+    right: 18px;
+    bottom: 18px;
+    width: 42px;
+    height: 42px;
   }
 }

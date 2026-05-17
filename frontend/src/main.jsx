@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 import {
   Activity,
+  ArrowUp,
   BarChart3,
   Bot,
   BriefcaseBusiness,
@@ -83,6 +84,32 @@ const iconByKey = {
   settings: Settings,
 };
 
+function ScrollToTopButton() {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setVisible(window.scrollY > 320);
+    };
+
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  return (
+    <button
+      type="button"
+      className={`scroll-top-button${visible ? " is-visible" : ""}`}
+      aria-label="Back to top"
+      title="Back to top"
+      onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+    >
+      <ArrowUp size={20} />
+    </button>
+  );
+}
+
 function App() {
   const { data } = useAsync(() => request("/pages"), []);
   const pages = data?.pages || [];
@@ -146,6 +173,7 @@ function App() {
           </Routes>
         </main>
       </div>
+      <ScrollToTopButton />
     </BrowserRouter>
   );
 }
